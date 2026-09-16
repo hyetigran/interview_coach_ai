@@ -32,7 +32,7 @@ export function createApplication(env: CloudflareEnv) {
         if (!invited) return json({ error: 'An active pilot invitation is required.' }, 403);
         if (path === '/api/me' && request.method === 'GET') return json({ id: session.user.id, name: session.user.name, email: session.user.email });
         if (path === '/api/reviews') {
-          if (request.method === 'GET') return json(await reviews.list(session.user.id));
+          if (request.method === 'GET') return json(await reviews.list(session.user.id, new URL(request.url).searchParams.get('cursor') ?? undefined));
           if (request.method === 'POST') {
             const body = await request.text();
             if (new TextEncoder().encode(body).length > 4096) return json({ error: 'Review details are too large.' }, 413);

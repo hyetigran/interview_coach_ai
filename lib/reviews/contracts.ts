@@ -6,3 +6,4 @@ export const createReviewSchema = z.object({
 }).strict();
 export type CreateReview = z.infer<typeof createReviewSchema>;
 export type Review = CreateReview & { id: string; createdAt: number; updatedAt: number };
+export type ReviewPage = { items: Review[]; nextCursor: string | null };

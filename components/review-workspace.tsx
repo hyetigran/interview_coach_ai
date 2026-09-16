@@ -2,9 +2,9 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, RequestError } from '@/lib/api';
-import type { Review } from '@/lib/reviews/contracts';
+import type { Review, ReviewPage } from '@/lib/reviews/contracts';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,7 +17,12 @@ export function ReviewWorkspace({ reviewId }: { reviewId?: string }) {
   const me = useQuery({ queryKey: ['me'], queryFn: () => api<Candidate>('/api/me'), retry: false });
   const ownerId = me.data?.id;
   useEffect(() => { if (me.error instanceof RequestError && me.error.status === 401) { client.clear(); router.replace('/sign-in'); } }, [me.error, router, client]);
-  const list = useQuery({ queryKey: ['reviews', ownerId], queryFn: () => api<Review[]>('/api/reviews'), enabled: Boolean(ownerId) && !reviewId });
+  const list = useInfiniteQuery({
+    queryKey: ['reviews', ownerId], initialPageParam: '',
+    queryFn: ({ pageParam }) => api<ReviewPage>(`/api/reviews${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`),
+    getNextPageParam: page => page.nextCursor ?? undefined, enabled: Boolean(ownerId) && !reviewId,
+  });
+  const listedReviews = list.data?.pages.flatMap(page => page.items);
   const detail = useQuery({ queryKey: ['review', ownerId, reviewId], queryFn: () => api<Review>(`/api/reviews/${reviewId}`), enabled: Boolean(ownerId && reviewId) });
   const create = useMutation({
     mutationFn: (form: FormData) => api<Review>('/api/reviews', { method: 'POST', body: JSON.stringify({ title: form.get('title'), role: form.get('role'), origin: form.get('origin') }) }),
@@ -45,8 +50,9 @@ export function ReviewWorkspace({ reviewId }: { reviewId?: string }) {
       <section><h1 className="text-3xl font-medium">Your reviews</h1><p className="mt-3 text-sm text-muted-foreground">A private place to reflect on past interviews.</p>
         {list.isPending && <p role="status" className="mt-6">Loading reviews…</p>}
         {list.error && <p role="alert" className="mt-6">{list.error.message}</p>}
-        {list.data?.length === 0 && <p className="mt-8 rounded-xl border p-6 text-sm">No reviews yet. Create your first review to get started.</p>}
-        <ul className="mt-6 space-y-3">{list.data?.map(review => <li key={review.id}><Link href={`/reviews/${review.id}`} className="block rounded-xl border p-5 hover:bg-muted focus-visible:ring-2"><h2 className="font-medium">{review.title}</h2><p className="mt-2 text-sm text-muted-foreground">{review.role} · {review.origin === 'hiring' ? 'Hiring interview' : 'Mock interview'}</p></Link></li>)}</ul>
+        {listedReviews?.length === 0 && <p className="mt-8 rounded-xl border p-6 text-sm">No reviews yet. Create your first review to get started.</p>}
+        <ul className="mt-6 space-y-3">{listedReviews?.map(review => <li key={review.id}><Link href={`/reviews/${review.id}`} className="block rounded-xl border p-5 hover:bg-muted focus-visible:ring-2"><h2 className="font-medium">{review.title}</h2><p className="mt-2 text-sm text-muted-foreground">{review.role} · {review.origin === 'hiring' ? 'Hiring interview' : 'Mock interview'}</p></Link></li>)}</ul>
+        {list.hasNextPage && <Button className="mt-4" variant="outline" disabled={list.isFetchingNextPage} onClick={() => list.fetchNextPage()}>{list.isFetchingNextPage ? 'Loading…' : 'Load more reviews'}</Button>}
       </section>
       <section className="rounded-xl border p-6"><h2 className="text-xl font-medium">Create a review</h2><form className="mt-6 space-y-5" onSubmit={event => { event.preventDefault(); create.mutate(new FormData(event.currentTarget)); }}>
         <div className="space-y-2"><Label htmlFor="title">Review title</Label><Input id="title" name="title" required maxLength={120} placeholder="Hiring manager conversation" /></div>
