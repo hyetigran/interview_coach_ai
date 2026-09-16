@@ -44,6 +44,21 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(report['coaching']['app']['unreviewed_threads'], 1)
             self.assertTrue(report['coaching']['app']['critical_defect_block'])
             self.assertEqual(report['validation_status'], 'not_independent_validation')
+            # Equal coverage outcomes must still expose rubric disagreements.
+            ratings = json.loads((root/'ratings.json').read_text())
+            ratings['grouping'] = [
+                {'case_id': 'fixture', 'question_id': 'q0', 'reviewer_id': reviewer,
+                 'correct_association': True, 'omitted': False,
+                 'attribution_error': reviewer == 'r2', 'transcription_error': False}
+                for reviewer in ('r1', 'r2')
+            ]
+            ratings['coaching'][1].update(supported_action=False, abstained=True)
+            (root/'ratings.json').write_text(json.dumps(ratings))
+            rescored = run('score', root/'manifest.json', root/'lock.json', root/'ratings.json', root/'disagreements.json')
+            self.assertEqual(rescored.returncode, 0, rescored.stderr)
+            disagreements = json.loads((root/'disagreements.json').read_text())
+            self.assertEqual(disagreements['grouping']['disputed_questions'], 1)
+            self.assertEqual(disagreements['coaching']['app']['disputed_threads'], 1)
             (root/'context.json').write_text('{"changed": true}')
             tampered = run('score', root/'manifest.json', root/'lock.json', root/'ratings.json', root/'changed.json')
             self.assertNotEqual(tampered.returncode, 0)

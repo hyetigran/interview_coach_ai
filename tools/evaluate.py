@@ -115,7 +115,7 @@ def score(manifest_path, lock_path, ratings_path):
         votes = [r for r in grouping if (r['case_id'], r['question_id']) == (case_id, question_id)]
         associated += bool(votes) and all(r['correct_association'] and not r['omitted'] for r in votes)
         omitted += not votes or any(r['omitted'] for r in votes)
-        disputed_groups += len({(r['correct_association'], r['omitted']) for r in votes}) > 1
+        disputed_groups += len({(r['correct_association'], r['omitted'], r['attribution_error'], r['transcription_error']) for r in votes}) > 1
     spurious = ratings.get('spurious_groups', [])
     case_ids = {case for case, _ in questions}
     for row in spurious:
@@ -128,7 +128,7 @@ def score(manifest_path, lock_path, ratings_path):
             votes = [r for r in coaching if (r['case_id'], r['thread_id']) == key and r['system'] == system]
             passes = [r['supported_action'] and not r['abstained'] and not r['critical_defects'] and not r['major_defects'] for r in votes]
             supported += bool(votes) and all(passes)
-            disputed += len(set(passes)) > 1
+            disputed += len({(r['supported_action'], r['abstained'], tuple(sorted(set(r['critical_defects']))), tuple(sorted(set(r['major_defects'])))) for r in votes}) > 1
             missing += not votes
             critical += any(r['critical_defects'] for r in votes)
             major += any(r['major_defects'] for r in votes)
