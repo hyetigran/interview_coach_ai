@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "interview-coach-local",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-09-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  "vars": { "APP_ORIGIN": "http://127.0.0.1:3000" },
+  "d1_databases": [{ "binding": "DB", "database_name": "interview-coach-local", "migrations_dir": "drizzle" }],
+  "env": {
+    "preview": {
+      "name": "interview-coach-preview",
+      "d1_databases": [{ "binding": "DB", "database_name": "interview-coach-preview", "migrations_dir": "drizzle" }]
+    },
+    "production": {
+      "name": "interview-coach",
+      "d1_databases": [{ "binding": "DB", "database_name": "interview-coach-production", "migrations_dir": "drizzle" }]
+    }
+  }
+}
