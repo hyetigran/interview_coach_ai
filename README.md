@@ -47,3 +47,11 @@ Preview and production use distinct Workers and D1 databases. The repository con
 Use backward-compatible migrations: rolling back a Worker does not undo database changes. Keep all auth secrets server-side. Remote invitations require both `--remote` and an explicit `--env preview` or `--env production`.
 
 Successful local build/testing does not establish a deployed smoke result. Track that evidence on the originating ticket before closing it.
+
+After preview deployment, run the same browser flow against its exact origin:
+
+```sh
+E2E_PREVIEW_ORIGIN=https://interview-coach-preview.<account-subdomain>.workers.dev pnpm test:e2e
+```
+
+This command creates two synthetic invited accounts in preview D1 using the authenticated Wrangler CLI. It verifies unauthenticated denial, owner isolation, same-origin mutation protection, create/reload/new-session persistence, and deletion. It deletes the test review; synthetic accounts remain in preview. The test refuses production origins.
