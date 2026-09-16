@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Private evaluation material and Python caches
+.evaluation-private/
+__pycache__/
+*.pyc
