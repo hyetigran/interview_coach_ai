@@ -1,3 +1,4 @@
+import { registerInvited } from './register-invited';
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -8,7 +9,7 @@ test('question threads open by keyboard and retain missing answers and uncertain
   const email=`threads-${randomUUID()}@example.com`;
   const invitation=execFileSync('node',['scripts/invite.mjs',email],{encoding:'utf8'}).trim().split('\n').at(-1)!;
   const origin='http://127.0.0.1:3000';
-  expect((await context.request.post('/api/auth/sign-up/email',{headers:{origin,'x-invitation-token':invitation},data:{name:'Threads Test',email,password:randomUUID()+randomUUID()}})).ok()).toBeTruthy();
+  expect((await registerInvited(context.request,{headers:{origin,'x-invitation-token':invitation},data:{name:'Threads Test',email,password:randomUUID()+randomUUID()}})).ok()).toBeTruthy();
   const review=await (await context.request.post('/api/reviews',{headers:{origin},data:{title:'Question navigation',role:'Engineer',origin:'mock'}})).json();
   const transcript:Transcript={version:1,model:'gpt-4o-transcribe-diarize',audioSha256:'hash',durationMs:9000,utterances:[
     {id:'q',speaker:'A',text:'What did you build?',startMs:0,endMs:2000,overlap:false},
@@ -27,14 +28,21 @@ test('question threads open by keyboard and retain missing answers and uncertain
   const root=page.locator('summary').filter({hasText:'What did you build?'});await root.focus();await page.keyboard.press('Enter');
   await expect(page.getByRole('heading',{name:'Original answer',exact:true})).toBeVisible();
   await expect(page.getByRole('heading',{name:'Proposed future answer'})).toBeVisible();
-  await expect(page.getByRole('heading',{name:'Supporting interview evidence'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Supporting evidence'})).toBeVisible();
   const follow=page.locator('summary').filter({hasText:'What would you change?'});await follow.focus();await page.keyboard.press('Enter');
   await expect(page.getByText('No supported answer was linked to this question.')).toBeVisible();
   await expect(page.getByText('This association is uncertain. Compare it with the transcript and audio.')).toBeVisible();
   const play=page.getByRole('button',{name:'Play passage at 0:04',exact:true});await play.focus();await page.keyboard.press('Enter');
   await expect(page.getByText(/Some sections could not be grouped/)).toBeVisible();
-  await page.route(`**/api/reviews/${review.id}/coaching`,route=>route.fulfill({json:{state:'outdated',jobs:[]}}));
+  await page.getByRole('button',{name:'Edit future answer',exact:true}).click();await page.getByRole('textbox',{name:'Your future answer',exact:true}).fill('My draft stays with the original coaching result.');
+  await page.route(`**/api/reviews/${review.id}/coaching`,route=>route.fulfill({json:{state:'outdated',jobs:[{id:'coach',threadId:groups[0].id,state:'outdated',result:advice,error:null}]}}));
+  const other=await context.newPage();await other.goto('about:blank');await other.bringToFront();await page.bringToFront();await page.evaluate(()=>window.dispatchEvent(new Event('visibilitychange')));
+  await expect(page.getByRole('textbox',{name:'Your future answer',exact:true})).toHaveValue('My draft stays with the original coaching result.');await other.close();
+  await expect(page.getByText(/Earlier advice: its source evidence changed/)).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Proposed future answer'})).toBeVisible();
+  let queuedPolls=0;await page.route(`**/api/reviews/${review.id}/coaching`,route=>{queuedPolls++;return route.fulfill({json:queuedPolls<3?{state:'queued',jobs:[]}:responses.coaching});});
   await page.reload();await root.focus();await page.keyboard.press('Enter');
-  await expect(page.getByText(/The source changed. This advice is outdated/)).toBeVisible();
+  await expect(page.getByText(/Coaching is waiting for its processing slot/)).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Proposed future answer'})).toBeVisible({timeout:15000});
   await context.request.delete(`/api/reviews/${review.id}`,{headers:{origin},data:{}});
 });

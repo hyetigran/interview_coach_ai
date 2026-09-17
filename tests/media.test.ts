@@ -47,6 +47,21 @@ test('multipart state survives reload, completion is idempotent, and ranged audi
   expect((await media.play('audio-owner', r.id, 'bytes=999999999-')).status).toBe(416);
   await expect(media.play('stranger', r.id, null)).rejects.toMatchObject({ status: 404 });
 });
+test('a 60-minute WAV uploads in parts and its final sample remains playable; longer audio is rejected', async () => {
+  const r = await review('duration-owner');
+  const bytes = wav(3600 * 32000 + 44);
+  // A nonzero final sample proves that playback reaches the end of the object.
+  bytes[bytes.length - 2] = 123;
+  const u = await upload('duration-owner', r.id, bytes);
+  await media.complete('duration-owner', r.id, u.id);
+  const end = await media.play('duration-owner', r.id, `bytes=${bytes.length - 2}-`);
+  expect(end.status).toBe(206);
+  expect(new Uint8Array(await end.arrayBuffer())).toEqual(new Uint8Array([123, 0]));
+  const tooLong = await review('duration-owner');
+  const invalid = await upload('duration-owner', tooLong.id, wav(3601 * 32000 + 44));
+  await expect(media.complete('duration-owner', tooLong.id, invalid.id)).rejects.toMatchObject({ status: 422 });
+  expect((await media.status('duration-owner', tooLong.id)).reserved).toBe(0);
+}, 120000);
 test('concurrent admissions cannot exceed allowance; expired reservations release and deletion does not replenish', async () => {
   const rs = await Promise.all(Array.from({ length: 4 }, () => review('quota-owner')));
   const attempts = await Promise.allSettled(rs.map(r => media.initiate('quota-owner', r.id, { name: 'test.wav', size: 100, actionId: crypto.randomUUID() })));

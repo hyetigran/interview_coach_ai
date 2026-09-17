@@ -1,0 +1,1 @@
+ALTER TABLE coaching_runs ADD COLUMN retry_attempts INTEGER NOT NULL DEFAULT 1;

@@ -2,7 +2,7 @@
 
 An invited pilot for software-engineering candidates reviewing recordings of hiring and mock interviews. Product requirements, architecture, glossary, and decisions are maintained in the repository documentation.
 
-The local app provides invitation-gated accounts, private persisted reviews, resumable WAV uploads, ranged audio playback, deletion, and automatic durable recording preparation. Video ingestion, transcription, and coaching remain subsequent tickets. The fictional interaction prototype is available at `/example`; it is separate from private reviews.
+The local app supports invited accounts, private audio/video reviews, durable transcription, speaker confirmation, question grouping, cited coaching, corrections, saved preparation, and bounded recovery. Independent quality evaluation and the five-candidate pilot remain pending. The fictional interaction prototype is available at `/example`; it is separate from private reviews.
 
 ## Local development
 
@@ -32,6 +32,8 @@ pnpm test:e2e
 ```
 
 Integration tests use real local D1 through Miniflare. Browser tests run the built application through Wrangler, including invitation, sign-in, create, reload, sign-out/sign-in, and deletion. Run local migrations and the Workers build before browser tests. Tests require loopback networking; no cloud credentials are required.
+
+For development-server checks and the 60-minute recording boundary, see [local verification evidence and remaining acceptance](docs/LOCAL-VERIFICATION.md). Local functional checks do not establish deployed readiness or independent coaching quality.
 
 ## Cloudflare deployment
 
@@ -148,3 +150,44 @@ outdated; deletion removes retained advice, source snapshots and provider receip
 opt-in paid synthetic draft/support test and writes its cost rows under `/tmp`.
 The implementation uses the native Responses HTTP API with a shared bounded
 adapter; no client-side credential or third-party inference proxy is involved.
+
+Selected context (ticket #9) accepts an optional resume, job description and up to
+three experience stories. Documents are limited to 12,000 characters, stories to
+4,000, and the complete context to 64 KB. Each item must be explicitly selected
+for future generation. Job text can explain relevance but cannot support personal
+achievements; an alternative story requires selected-background citations and a
+question-fit rationale. Background citations are visibly distinguished from
+recorded interview speech.
+
+Saving role/context uses optimistic concurrency and a separate coaching revision:
+transcription and grouping remain valid, and no paid analysis starts from an edit.
+Use **Reanalyze coaching** after saving. Reanalysis persists its intent, reuses
+current work, waits for the account slot, and runs under the same shared allowance.
+The first automatic analysis uses the context revision captured at speaker
+confirmation; editing while grouping is underway requires explicit reanalysis.
+Excluding context changes future inputs. Earlier context snapshots remain for
+historical citations and saved work; whole-review deletion removes them.
+
+### Saved preparation
+
+Candidates can edit a proposed future answer and save up to three priorities per review. Each answer revision retains its original thread, coaching result and evidence snapshot; older preparation stays editable when analysis changes. Saved evidence is available from the preparation panel. These writes never trigger paid processing or become transcript/background facts.
+
+Answer text is limited to 10,000 characters; each priority to 500 characters. Conditional versions reject concurrent overwrites and the editor preserves its draft until the candidate explicitly loads the latest saved version. Whole-review deletion erases all saved revisions and priorities and clears the review's private query caches.
+
+### Transcript wording corrections
+
+Passage corrections create immutable transcript versions and retain the original transcript, media, prior evidence and saved preparation. Candidates confirm that corrections reflect recorded speech; new career facts belong in selected background. Passage timestamps remain the original enclosing audio range, without invented word timing.
+
+Saving revokes affected generation immediately without starting paid calls. Explicit refresh reuses the last analysis's identical grouping prefix only when candidate-speaker labels also match; a changed window invalidates its downstream carried-question dependencies. Coaching is reused only when all substantive supplied sources/metadata and generation versions match. Repeated corrections before a refresh compare against the actual earlier analysis snapshot. Earlier advice stays readable as potentially outdated history.
+
+Correction text is bounded to 50,000 characters per passage and the complete transcript to 8 MB. Conditional versions preserve drafts on conflicts; older GET responses cannot rewind the displayed transcript. Registered object intents make interrupted correction writes discoverable for cleanup, and review deletion removes corrected snapshots.
+
+## Independent quality evaluation
+
+The [evaluation protocol](docs/evaluation/README.md) includes a private corpus manifest, labeling rubric, blinded baseline comparison, executable scoring, and results template. Keep recordings, reference labels, outputs, and reviewer identities outside Git. The protocol records missing recordings and independent reviewers explicitly; application tests and synthetic fixtures do not establish coaching quality.
+
+Run the evaluation CLI checks separately from the app tests:
+
+```sh
+python3 -m unittest discover -s tests -p 'test_evaluation.py'
+```

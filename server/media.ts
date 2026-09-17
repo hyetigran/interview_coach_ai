@@ -1,3 +1,4 @@
+import {createCorrectionModule} from './transcript-corrections';
 import { createCoachingModule } from './coaching';
 import { createGroupingModule } from './grouping';
 import { initialJobStatement, createRuntimeProcessing } from './processing';
@@ -38,6 +39,10 @@ export function createMediaModule(env: Environment) {
     await db.prepare("UPDATE uploads SET cleaned_at=?, name='' WHERE id=? AND state='cleanup'").bind(Date.now(), row.id).run();
   }
   async function cleanup() {
+    await createCorrectionModule(env).cleanup();
+    await db.prepare("DELETE FROM review_context_versions WHERE NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=review_context_versions.review_id AND lifecycle='active')").run();
+    await db.prepare("DELETE FROM saved_answers WHERE NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=saved_answers.review_id AND lifecycle='active')").run();
+    await db.prepare("DELETE FROM review_priorities WHERE NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=review_priorities.review_id AND lifecycle='active')").run();
     await db.prepare("UPDATE uploads SET state='cleanup' WHERE admitted_at IS NULL AND state NOT IN ('cleanup','rejected') AND expires_at<=?").bind(Date.now()).run();
     const rows = (await db.prepare("SELECT * FROM uploads WHERE state='cleanup' ORDER BY COALESCE(cleanup_attempted_at,0), created_at LIMIT 25").all<Row>()).results;
     for (const row of rows) { await db.prepare('UPDATE uploads SET cleanup_attempted_at=? WHERE id=?').bind(Date.now(), row.id).run(); try { await cleanupRow(row); } catch { /* Persisted tombstone is retried by the next sweep. */ } }
@@ -125,12 +130,16 @@ export function createMediaModule(env: Environment) {
   async function remove(owner: string, review: string) {
     await db.batch([
       db.prepare("UPDATE reviews SET lifecycle='deleting',title='',role='' WHERE id=? AND owner_id=?").bind(review, owner),
+      db.prepare("DELETE FROM review_context_versions WHERE review_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review,review,owner),
+      db.prepare("DELETE FROM saved_answers WHERE review_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review,review,owner),
+      db.prepare("DELETE FROM review_priorities WHERE review_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review,review,owner),
       db.prepare("UPDATE uploads SET state='cleanup',name='',cleaned_at=NULL WHERE review_id=? AND owner_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review, owner, review, owner),
       db.prepare("UPDATE processing_jobs SET dispatch_state=CASE WHEN state='queued' OR (state='cancelled' AND dispatch_state='cancelled') THEN 'cancelled' ELSE 'cancel_pending' END,state='cancelled',result=NULL,error=NULL,finished_at=? WHERE review_id=? AND owner_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(Date.now(), review, owner, review, owner),
     ]);
     await db.prepare("UPDATE grouping_runs SET state='cancelled' WHERE review_id=? AND owner_id=?").bind(review,owner).run();
     await createGroupingModule(env).cleanup();
     await createCoachingModule(env).cleanup();
+    await createCorrectionModule(env).cleanup();
     await db.prepare("UPDATE speaker_confirmations SET state='cancelled',speakers='[]' WHERE review_id=? AND owner_id=?").bind(review,owner).run();
     await db.prepare("UPDATE transcriptions SET state='cancelled',result_key=NULL,error=NULL WHERE review_id=? AND owner_id=?").bind(review, owner).run();
     const rows = (await db.prepare("SELECT * FROM uploads WHERE review_id=? AND owner_id=? AND state='cleanup'").bind(review, owner).all<Row>()).results;
@@ -150,7 +159,7 @@ export function createMediaModule(env: Environment) {
     const row = await db.prepare("SELECT * FROM uploads WHERE review_id=? AND owner_id=? AND state='admitted'").bind(review, owner).first<Row>();
     if (!row) throw new MediaError(404, 'Recording not found.');
     if (!/\.wav$/i.test(row.name)) {
-      const job = await db.prepare("SELECT result FROM processing_jobs WHERE review_id=? AND owner_id=? AND state='ready' AND revision=(SELECT input_revision FROM reviews WHERE id=?)").bind(review, owner, review).first<{ result: string }>();
+      const job = await db.prepare("SELECT result FROM processing_jobs WHERE review_id=? AND owner_id=? AND state='ready' AND upload_id=? ORDER BY created_at DESC LIMIT 1").bind(review, owner, row.id).first<{ result: string }>();
       if (!job) throw new MediaError(409, 'Audio is still being prepared.');
       const result = JSON.parse(job.result); row.object_key = result.audioKey; row.size = result.audioBytes;
     }

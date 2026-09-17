@@ -1,8 +1,9 @@
 /// <reference types="@cloudflare/workers-types" />
 interface CloudflareEnv {
+  LOCAL_API_ORIGIN?: string;
   LOCAL_MEDIA_ADAPTER?: string;
   OPENAI_API_KEY?: string;
-  CONTINUATION?: Workflow<{ confirmationId: string }>;
+  CONTINUATION?: Workflow<{ confirmationId: string; coachingRunId?: string }>;
   DB: D1Database;
   MEDIA: R2Bucket;
   PROCESSING?: Workflow<{ jobId: string }>;
