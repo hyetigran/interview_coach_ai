@@ -1,5 +1,5 @@
 import { Container } from '@cloudflare/containers';
-import { createBudgetLedger } from '../server/budget';
+import { reserveMediaAttempt } from '../server/media-admission';
 
 // Each durable object represents one paid attempt. Never restart a consumed attempt.
 export class MediaProcessor extends Container<{DB: D1Database}> {
@@ -20,13 +20,13 @@ export class MediaProcessor extends Container<{DB: D1Database}> {
     const admitted = await this.ctx.blockConcurrencyWhile(async () => {
       if (await this.ctx.storage.get('consumed')) return 409;
       // $0.10 stays reserved until Cloudflare billing is reconciled. No invented receipt.
-      if (!await createBudgetLedger(this.env.DB).reserve('media-' + path.slice(1).replace('/', '-'), 'cloudflare-media-v1', 100000)) return 402;
+      if (!await reserveMediaAttempt(this.env.DB, path)) return 402;
       await this.ctx.storage.put('consumed', true);
       await this.schedule(120, 'expire');
       await this.startAndWaitForPorts({ports:8790, startOptions:{envVars:{AUTH_SECRET:secret},enableInternet:false}, cancellationOptions:{instanceGetTimeoutMS:10000,portReadyTimeoutMS:10000}});
       return 200;
     });
-    if (admitted !== 200) return new Response(admitted === 402 ? 'The processing allowance cannot cover media preparation.' : 'This media attempt was already submitted. Retry after cancellation completes.', {status:admitted});
+    if (admitted !== 200) return new Response(admitted === 402 ? 'Media processing is no longer eligible, has unresolved billing, or exceeds the allowance.' : 'This media attempt was already submitted. Retry after cancellation completes.', {status:admitted});
     try {
       // Avoid containerFetch's automatic restart after an uncertain/terminated execution.
       const init: RequestInit & {duplex:'half'} = {method:'POST',headers:{authorization:`Bearer ${secret}`},body:request.body,signal:request.signal,duplex:'half'};

@@ -1,5 +1,8 @@
 import {afterAll, beforeAll, expect, test, vi} from 'vitest';
 import {Miniflare, convertV4MiniflareOptions} from 'miniflare';
+import {readFileSync,readdirSync} from 'node:fs';
+import {reserveMediaAttempt} from '../server/media-admission';
+import {noUnresolvedProviders} from '../server/historical-billing';
 import {mediaServiceRequest} from '../server/media-service';
 
 vi.mock('@cloudflare/containers', () => ({Container: class {
@@ -13,7 +16,12 @@ const runtime = new Miniflare(convertV4MiniflareOptions({modules:true,script:'ex
 let db: D1Database;
 beforeAll(async () => {
   db = await runtime.getD1Database('DB') as unknown as D1Database;
-  await db.prepare("CREATE TABLE processing_budget(id TEXT PRIMARY KEY,operation TEXT,reserved_units INTEGER,state TEXT DEFAULT 'reserved',settled_units INTEGER)").run();
+  for (const file of readdirSync(new URL('../drizzle/', import.meta.url)).filter(f=>f.endsWith('.sql')).sort()) for (const statement of readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8').split('--> statement-breakpoint')) if(statement.trim()) await db.prepare(statement).run();
+  for (let n=1;n<=7;n++) {
+    const id=path(n).slice('/operations/'.length);
+    await db.prepare("INSERT INTO reviews(id,owner_id,title,role,origin,created_at,updated_at) VALUES(?,?,'Test','Engineer','mock',0,0)").bind(id,'owner-'+n).run();
+    await db.prepare("INSERT INTO processing_jobs(id,review_id,owner_id,upload_id,state,deadline,created_at) VALUES(?,?,?,?,'running',?,0)").bind(id,id,'owner-'+n,id,Date.now()+300000).run();
+  }
 });
 afterAll(() => runtime.dispose());
 function processor() {
@@ -61,7 +69,7 @@ test('private endpoints reject browser origins and unsupported routes',async()=>
   expect(service.startAndWaitForPorts).not.toHaveBeenCalled();
 });
 test('insufficient shared allowance does not start compute',async()=>{
-  await db.prepare("INSERT INTO processing_budget VALUES('other','other',49800000,'reserved',NULL)").run();
+  await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units) VALUES('other','other',49800000)").run();
   const {service}=processor();
   expect((await service.fetch(request(5))).status).toBe(402);
   expect(service.startAndWaitForPorts).not.toHaveBeenCalled();
@@ -74,4 +82,19 @@ test('hosted requests use the private binding and never leak local authenticatio
   expect(await response.text()).toBe('audio');
   expect(namespace.idFromName).toHaveBeenCalledWith(path(6));
   expect(network).not.toHaveBeenCalled();
+});
+
+test('late dispatch after deletion is denied even before cancellation reaches the container',async()=>{
+  const id=path(7).slice('/operations/'.length);
+  await db.prepare("DELETE FROM processing_budget WHERE id='other'").run();
+  await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(id).run();
+  const {service}=processor();
+  expect((await service.fetch(request(7))).status).toBe(402);
+  expect(service.startAndWaitForPorts).not.toHaveBeenCalled();
+});
+test('a lost media outcome blocks new attempt identities and account admission',async()=>{
+  const id=path(1).slice('/operations/'.length);
+  await db.prepare('UPDATE processing_jobs SET attempt=1 WHERE id=?').bind(id).run();
+  expect(await reserveMediaAttempt(db,path(1)+'-prepare-attempt-1')).toBe(false);
+  expect(await db.prepare(`SELECT 1 AS allowed WHERE ${noUnresolvedProviders("'owner-1'")}`).first()).toBeNull();
 });
