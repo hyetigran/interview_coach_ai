@@ -34,3 +34,12 @@ pnpm exec playwright test e2e/stage-recovery.spec.ts e2e/recovery.spec.ts e2e/an
 Preparation and saved-transcript publication cases seed owned audio, transcripts, a synthetic receipt, and an explicitly synthetic zero-cost ledger. They exercise real retry admission, Workflow or scheduled publication, keyboard interaction, duplicate actions, reload, and deletion. They assert retained identities and attempt counts with no additional ledger entries. They do not make new provider calls. Voice-confirmation, grouping, and coaching cases use their own provider-free synthetic fixtures; media/preparation presentation is mocked in those cases.
 
 These checks do not establish real-provider retry or billing reconciliation, the complete deployed failure/deletion matrix, provider quality, recording permissions for a pilot corpus, or independent coaching-quality acceptance. Ticket #13 remains open until its remaining acceptance evidence exists.
+
+The preview-only late-artifact check runs with
+`E2E_PREVIEW_ORIGIN=https://interview-coach-preview.hyetigran.workers.dev pnpm exec playwright test e2e/late-artifact-cleanup.spec.ts`.
+It deletes an unfinished multipart upload, verifies that its issued part capability
+and completion request are denied, then injects synthetic late original, derivative,
+and transcript/receipt objects into R2. Every injected upload must succeed. Read-back accepts either the object or an
+explicit not-found response if cleanup already won the race. After the deployed
+scheduled tombstone sweep, every object must return explicit not-found. This tests cleanup of late storage writes; it does not prove
+cancellation of an actual in-flight transcription or coaching provider request.
