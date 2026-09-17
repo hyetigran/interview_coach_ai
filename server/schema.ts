@@ -60,3 +60,9 @@ export const processingJobs = sqliteTable('processing_jobs', {
 export const processingBudget = sqliteTable('processing_budget', {
   id: text().primaryKey(), operation: text().notNull(), reservedUnits: integer('reserved_units').notNull(), settledUnits: integer('settled_units'), state: text().notNull().default('reserved'),
 });
+
+export const transcriptions = sqliteTable('transcriptions', {
+  id: text().primaryKey(), reviewId: text('review_id').notNull(), ownerId: text('owner_id').notNull(), jobId: text('job_id').notNull().unique(),
+  revision: integer().notNull(), state: text().notNull().default('queued'), resultKey: text('result_key'), requestId: text('request_id'),
+  error: text(), startedAt: integer('started_at'), finishedAt: integer('finished_at'),
+});

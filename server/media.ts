@@ -31,7 +31,7 @@ export function createMediaModule(env: Environment) {
   }
   async function cleanupRow(row: Row) {
     // Keep tombstones and object keys: a late completion can write after an earlier cleanup.
-    await Promise.all([row.multipart_id ? bucket.resumeMultipartUpload(row.object_key, row.multipart_id).abort() : Promise.resolve(), bucket.delete(row.object_key), cleanupAudio(row.id)]);
+    await Promise.all([row.multipart_id ? bucket.resumeMultipartUpload(row.object_key, row.multipart_id).abort() : Promise.resolve(), bucket.delete(row.object_key), cleanupAudio(row.id), bucket.delete([`transcripts/${row.review_id}/transcript-prepare-${row.id}.json`, `transcripts/${row.review_id}/transcript-prepare-${row.id}.provider.json`])]);
     await db.prepare('DELETE FROM upload_parts WHERE upload_id=?').bind(row.id).run();
     await db.prepare("UPDATE uploads SET cleaned_at=?, name='' WHERE id=? AND state='cleanup'").bind(Date.now(), row.id).run();
   }
@@ -126,6 +126,7 @@ export function createMediaModule(env: Environment) {
       db.prepare("UPDATE uploads SET state='cleanup',name='',cleaned_at=NULL WHERE review_id=? AND owner_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review, owner, review, owner),
       db.prepare("UPDATE processing_jobs SET dispatch_state=CASE WHEN state='queued' OR (state='cancelled' AND dispatch_state='cancelled') THEN 'cancelled' ELSE 'cancel_pending' END,state='cancelled',result=NULL,error=NULL,finished_at=? WHERE review_id=? AND owner_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(Date.now(), review, owner, review, owner),
     ]);
+    await db.prepare("UPDATE transcriptions SET state='cancelled',result_key=NULL,error=NULL WHERE review_id=? AND owner_id=?").bind(review, owner).run();
     const rows = (await db.prepare("SELECT * FROM uploads WHERE review_id=? AND owner_id=? AND state='cleanup'").bind(review, owner).all<Row>()).results;
     for (const row of rows) { try { await cleanupRow(row); } catch { /* Report pending and retain for retry. */ } }
     await createRuntimeProcessing(env).reconcile();
