@@ -55,6 +55,7 @@ for (const seconds of [3600, 3601]) {
         await expect.poll(() => audio.evaluate((element:HTMLAudioElement) => element.duration)).toBe(3600);
       } else {
         expect(state.error).toMatch(/60 minutes/);
+        await expect(page.getByRole('alert').filter({hasText:/60 minutes/})).toBeVisible();
         expect(state.retry.canRetry).toBe(false);
         expect(state.result).toBeNull();
         expect((await context.request.get(endpoint + '/audio')).status()).toBe(404);
