@@ -1,6 +1,6 @@
 # Independent quality evaluation
 
-Status: **prepared protocol and tooling; no evaluation recordings are ready; reference annotations and independent reviewers are not yet available**. The user clarified on 2026-09-17 that no recordings are ready. No corpus has been inspected or frozen, and no measured results are available. This work supports ticket #14. Author fixtures demonstrate the evaluation tool, not transcription accuracy, useful coaching, or product demand.
+Status: **prepared protocol and tooling; no evaluation recordings are ready; reference annotations have not been supplied and independent reviewer availability is unconfirmed**. The user clarified on 2026-09-17 that no recordings are ready. No corpus has been inspected or frozen, and no measured results are available. This work supports ticket #14. Author fixtures demonstrate the evaluation tool, not transcription accuracy, useful coaching, or product demand.
 
 ## Evidence needed before completion
 
