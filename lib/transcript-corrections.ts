@@ -3,7 +3,7 @@ import {groupingWindows} from './threads';
 import {transcriptSchema,type Transcript} from './transcript';
 export const correctionSchema=z.object({transcriptId:z.string().min(1).max(160),utteranceId:z.string().min(1).max(160),text:z.string().trim().min(1).max(50000),recordingOnly:z.literal(true)}).strict();
 export function correctUtterance(transcript:Transcript,utteranceId:string,text:string):Transcript {
- const original=transcript.utterances.find(u=>u.id===utteranceId);if(!original)throw new Error('Passage not found.');
+ const original=transcript.utterances.find(u=>u.id===utteranceId);if(!original)throw new Error('Passage not found.');if(original.text===text)return transcript;
  // Correct wording in the whole identified utterance, never by searching for a
  // repeated quote. Audio bounds and attribution remain the original observations.
  const next=transcriptSchema.parse({...transcript,utterances:transcript.utterances.map(u=>u.id===utteranceId?{...u,text,corrected:true}:u)});

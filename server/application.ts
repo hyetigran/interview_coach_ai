@@ -1,3 +1,4 @@
+import {createGroupingCorrectionModule} from './grouping-corrections';
 import {createCorrectionModule,CorrectionError} from './transcript-corrections';
 import {createPreparationModule,PreparationError} from './preparation';
 import {createContextModule,ContextError} from './review-context';
@@ -52,7 +53,7 @@ export function createApplication(env: CloudflareEnv) {
           }
           return json({ error: 'Method not allowed.' }, 405);
         }
-        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|transcript|speakers|threads|coaching|context|preparation|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
+        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|transcript|speakers|threads|coaching|context|preparation|attribution|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
         if (mediaPath) {
           const [, reviewId, action, uploadId, operation, part, sign] = mediaPath;
           if(action==='preparation') {
@@ -81,6 +82,9 @@ export function createApplication(env: CloudflareEnv) {
             if (request.method === 'GET') return json(await createRuntimeSpeakers(env).status(session.user.id,reviewId));
             if (request.method === 'POST') return json(await createRuntimeSpeakers(env).confirm(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,16000)))));
           }
+          if(action==='attribution'&&request.method==='GET')return json(await createGroupingCorrectionModule(env).status(session.user.id,reviewId));
+          if(action==='attribution'&&request.method==='POST')return json(await createGroupingCorrectionModule(env).attribution(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,2000000)))));
+          if(action==='threads'&&request.method==='PUT')return json(await createGroupingCorrectionModule(env).grouping(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,2000000)))));
           if(action==='transcript'&&['PATCH','POST'].includes(request.method)) {
             const corrections=createCorrectionModule(env),body=JSON.parse(new TextDecoder().decode(await boundedBytes(request,205000)));
             return json(request.method==='PATCH'?await corrections.save(session.user.id,reviewId,body):await corrections.refresh(session.user.id,reviewId,body));

@@ -77,6 +77,7 @@ export const speakerConfirmations = sqliteTable('speaker_confirmations', {
 }, table => [uniqueIndex('speaker_review_revision').on(table.reviewId, table.revision)]);
 
 export const groupingRuns = sqliteTable('grouping_runs', {
+  outputVersion:integer('output_version').notNull().default(0),
   id:text().primaryKey(),reviewId:text('review_id').notNull(),ownerId:text('owner_id').notNull(),transcriptId:text('transcript_id').notNull(),
   revision:integer().notNull(),state:text().notNull().default('running'),total:integer().notNull(),deadline:integer().notNull(),
 });
@@ -97,4 +98,4 @@ export const reviewContextVersions=sqliteTable('review_context_versions',{id:tex
 export const reviewPriorities=sqliteTable('review_priorities',{reviewId:text('review_id').primaryKey(),version:integer().notNull(),body:text().notNull(),updatedAt:integer('updated_at').notNull()});
 export const savedAnswers=sqliteTable('saved_answers',{id:text().primaryKey(),reviewId:text('review_id').notNull(),coachingJobId:text('coaching_job_id').notNull(),threadId:text('thread_id').notNull(),version:integer().notNull(),body:text().notNull(),sources:text().notNull(),coachingResult:text('coaching_result').notNull(),createdAt:integer('created_at').notNull()},table=>[uniqueIndex('saved_answer_version').on(table.reviewId,table.coachingJobId,table.version)]);
 
-export const transcriptCorrectionIntents=sqliteTable('transcript_correction_intents',{id:text().primaryKey(),reviewId:text('review_id').notNull(),ownerId:text('owner_id').notNull(),parentId:text('parent_id').notNull(),revision:integer().notNull(),resultKey:text('result_key').notNull(),state:text().notNull().default('preparing'),createdAt:integer('created_at').notNull(),reuseGroupingId:text('reuse_grouping_id'),reusePrefix:integer('reuse_prefix').notNull().default(0)});
+export const transcriptCorrectionIntents=sqliteTable('transcript_correction_intents',{candidateSpeakers:text('candidate_speakers'),manualGroups:text('manual_groups'),manualReview:integer('manual_review').notNull().default(0),coverage:text(),id:text().primaryKey(),reviewId:text('review_id').notNull(),ownerId:text('owner_id').notNull(),parentId:text('parent_id').notNull(),revision:integer().notNull(),resultKey:text('result_key').notNull(),state:text().notNull().default('preparing'),createdAt:integer('created_at').notNull(),reuseGroupingId:text('reuse_grouping_id'),reusePrefix:integer('reuse_prefix').notNull().default(0)});

@@ -1,4 +1,5 @@
 'use client';
+import {AttributionCorrection,speakerName} from './attribution-correction';
 import {TranscriptCorrection,RefreshCorrectedAnalysis} from './transcript-correction';
 import { QuestionThreads } from './question-threads';
 import { SpeakerConfirmation } from './speaker-confirmation';
@@ -22,14 +23,16 @@ export function TranscriptView({ reviewId }: { reviewId: string }) {
     {query.error&&<p role="alert">Unable to refresh the transcript. Open corrections are preserved.</p>}
     {state.parentId&&<RefreshCorrectedAnalysis reviewId={reviewId} transcriptId={state.id}/>}
     <SpeakerConfirmation reviewId={reviewId} transcriptId={state.id} transcript={state.transcript} />
+    <AttributionCorrection reviewId={reviewId} transcriptId={state.id} revision={state.revision} transcript={state.transcript}/>
     <QuestionThreads reviewId={reviewId} />
     <audio ref={audio} controls preload="none" src={`/api/reviews/${reviewId}/audio`} aria-label="Transcript passage playback" />
     {!utterances.length && <p>No speech was detected. Listen to your recording to check it.</p>}
     <ol className="space-y-4">{visible.map(utterance => <li key={utterance.id} className="rounded-md border p-3">
       <Button variant="ghost" onClick={() => { if (audio.current) { audio.current.currentTime = utterance.startMs / 1000; void audio.current.play().catch(() => {}); } }} aria-label={`Play passage at ${Math.floor(utterance.startMs / 60000)} minutes ${Math.floor(utterance.startMs / 1000) % 60} seconds`}>{Math.floor(utterance.startMs / 60000)}:{String(Math.floor(utterance.startMs / 1000) % 60).padStart(2, '0')}</Button>
-      <span className="text-sm font-medium">{utterance.speaker ? `Speaker ${utterance.speaker}` : 'Unidentified speaker'}</span>
+      <span className="text-sm font-medium">{speakerName(utterance.speaker)}</span>
       {utterance.overlap && <span className="ml-2 text-sm">Overlapping speech — check the audio</span>}
       <p className="mt-2 whitespace-pre-wrap">{utterance.text}</p>{utterance.corrected&&<p className="text-sm">Candidate-corrected wording · original audio range retained</p>}
+      {utterance.attributionCorrected&&<p className="text-sm">Candidate-corrected attribution · original audio range retained</p>}
       <TranscriptCorrection reviewId={reviewId} transcriptId={state.id} revision={state.revision} utterance={utterance}/>
     </li>)}</ol>
     {utterances.length > 100 && <div className="flex items-center gap-3"><Button variant="outline" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous passages</Button><span>Page {page + 1} of {Math.ceil(utterances.length / 100)}</span><Button variant="outline" disabled={(page + 1) * 100 >= utterances.length} onClick={() => setPage(page + 1)}>Next passages</Button></div>}
