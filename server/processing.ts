@@ -132,7 +132,7 @@ export function createRuntimeProcessing(env: Environment & { PROCESSING?: Workfl
         }
       }
       try { const instance = await env.PROCESSING!.get(preparationAttemptId(id,attempt)); const status = await instance.status(); if (!['complete', 'terminated', 'errored'].includes(status.status)) await instance.terminate(); }
-      catch (error) { if (!(error instanceof Error && /^instance\.not_found(?::|$)/.test(error.message))) throw error; }
+      catch (error) { if (!(error instanceof Error && /^(?:instance\.not_found(?::|$)|\(instance\.not_found\)(?:\s|$))/.test(error.message))) throw error; }
     } : undefined,
   );
 }

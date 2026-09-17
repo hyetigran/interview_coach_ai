@@ -1,4 +1,4 @@
-# Local processing recovery
+# Processing recovery
 
 Recovery is persisted in D1 and R2. Closing a browser does not cancel a job. The review page reads the current stage and offers an explicit retry when its inputs, previous charges, attempt limit, and shared allowance permit one.
 
@@ -16,10 +16,21 @@ Saved provider results have at most three publication attempts within 15 minutes
 
 Preparation dispatch has three attempts and a five-minute stage deadline once claimed. A failed preparation retains the account slot until cancellation succeeds. Confirmation and context-reanalysis dispatch also have three attempts with a one-minute lease; their stage deadlines remain five minutes and three hours respectively. Other explicit retry dispatches have three attempts; transcription and coaching retries expire within 15 minutes. Grouping dispatch expires after 15 minutes, while an admitted grouping plan has a three-hour processing deadline. HTTP retry endpoints persist intent and return `202`; the scheduled job Worker dispatches it. Dispatch retries reuse the same Workflow identity after a lost response. Late callbacks must match the current attempt and input dependencies before publication.
 
+Cancellation also completes when the Workflow instance is already absent. Both the local `instance.not_found` form and the deployed `(instance.not_found) Instance not found` form are recognized. Other service errors keep cancellation pending, so a transient lookup failure cannot release the account slot as though termination were confirmed.
+
 The local development command is `pnpm dev`. It reads `OPENAI_API_KEY` from the ignored `.env` file and synchronizes it to the ignored Wrangler secrets file. Apply local migrations with `pnpm db:migrate:local` before starting a checkout with new schema changes.
 
 ## Verification and remaining acceptance
 
 The integration suite injects provider-response loss, database-publication failure, invalid output, changed dependencies, duplicate actions, dispatch failure, budget exhaustion, and deletion. `pnpm test:media` exercises real ffmpeg conversion and attempt-specific compression routes. Recovery browser tests exercise authenticated keyboard interaction and reload persistence using deterministic cases that require no provider calls.
 
-Remote smoke acceptance remains outstanding while local implementation is prioritized. These tests do not establish provider quality, recording permissions for a pilot corpus, or independent coaching-quality acceptance.
+The recovery browser suite can also target preview:
+
+```sh
+E2E_PREVIEW_ORIGIN=https://interview-coach-preview.hyetigran.workers.dev \
+pnpm exec playwright test e2e/stage-recovery.spec.ts e2e/recovery.spec.ts e2e/analysis-recovery.spec.ts
+```
+
+Preparation and saved-transcript publication cases seed owned audio, transcripts, a synthetic receipt, and an explicitly synthetic zero-cost ledger. They exercise real retry admission, Workflow or scheduled publication, keyboard interaction, duplicate actions, reload, and deletion. They assert retained identities and attempt counts with no additional ledger entries. They do not make new provider calls. Voice-confirmation, grouping, and coaching cases use their own provider-free synthetic fixtures; media/preparation presentation is mocked in those cases.
+
+These checks do not establish real-provider retry or billing reconciliation, the complete deployed failure/deletion matrix, provider quality, recording permissions for a pilot corpus, or independent coaching-quality acceptance. Ticket #13 remains open until its remaining acceptance evidence exists.
