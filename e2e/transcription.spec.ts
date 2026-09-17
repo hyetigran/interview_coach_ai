@@ -1,3 +1,4 @@
+import { registerInvited } from './register-invited';
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -9,7 +10,7 @@ test('real OpenAI transcript survives leaving the page and supports timestamped 
   const email = `speech-${randomUUID()}@example.com`;
   const invitation = execFileSync('node', ['scripts/invite.mjs', email], { encoding: 'utf8' }).trim().split('\n').at(-1)!;
   const origin = 'http://127.0.0.1:3000';
-  const registration = await context.request.post(origin + '/api/auth/sign-up/email', { headers: { origin, 'x-invitation-token': invitation }, data: { name: 'Synthetic Speech Test', email, password: randomUUID() + randomUUID() } });
+  const registration = await registerInvited(context.request, { headers: { origin, 'x-invitation-token': invitation }, data: { name: 'Synthetic Speech Test', email, password: randomUUID() + randomUUID() } });
   expect(registration.ok()).toBeTruthy();
   const creation = await context.request.post(origin + '/api/reviews', { headers: { origin }, data: { title: 'Synthetic two-speaker interview', role: 'Software engineer', origin: 'mock' } });
   expect(creation.ok()).toBeTruthy(); const review = await creation.json();

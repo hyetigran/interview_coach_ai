@@ -1,3 +1,4 @@
+import { registerInvited } from './register-invited';
 import {test,expect} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
@@ -9,7 +10,7 @@ const sql=(value:string)=>"'"+value.replaceAll("'","''")+"'";
 for(const stage of ['grouping','coaching'] as const)test(`candidate retries ${stage} and returns to the persisted result`,async({page,context})=>{
  test.setTimeout(150000);const origin='http://127.0.0.1:3000',email=`recovery-${randomUUID()}@example.com`;
  const invitation=execFileSync('node',['scripts/invite.mjs',email],{encoding:'utf8'}).trim().split('\n').at(-1)!;
- const signup=await context.request.post('/api/auth/sign-up/email',{headers:{origin,'x-invitation-token':invitation},data:{name:'Recovery Test',email,password:randomUUID()+randomUUID()}});expect(signup.ok()).toBeTruthy();const owner=(await signup.json()).user.id;
+ const signup=await registerInvited(context.request,{headers:{origin,'x-invitation-token':invitation},data:{name:'Recovery Test',email,password:randomUUID()+randomUUID()}});expect(signup.ok()).toBeTruthy();const owner=(await signup.json()).user.id;
  const review=await (await context.request.post('/api/reviews',{headers:{origin},data:{title:`${stage} recovery`,role:'Engineer',origin:'mock'}})).json(),endpoint=`/api/reviews/${review.id}`;
  const transcriptId=randomUUID(),run=randomUUID(),job='coach-'+randomUUID(),key=`transcripts/${review.id}/${transcriptId}.json`;
  // Candidate-only grouping and incomplete coaching deterministically require no
