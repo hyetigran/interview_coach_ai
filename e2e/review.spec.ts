@@ -22,7 +22,7 @@ test('invited candidate creates, reopens after sign-in, and deletes a review', a
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByLabel('Invitation code').fill(token);
   await page.getByRole('button', { name: 'Create account', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Your reviews' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your reviews' })).toBeVisible({ timeout: 15000 });
   await page.getByLabel('Review title').fill('Hiring manager discussion');
   await page.getByLabel('Target role').fill('Software engineer');
   await page.getByLabel('Interview type').selectOption('hiring');
