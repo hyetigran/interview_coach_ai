@@ -1,3 +1,4 @@
+import { createGroupingModule } from './grouping';
 import { createRuntimeSpeakers, SpeakerError } from './speakers';
 import { createTranscriptionModule } from './transcription';
 import { and, eq } from 'drizzle-orm';
@@ -46,9 +47,13 @@ export function createApplication(env: CloudflareEnv) {
           }
           return json({ error: 'Method not allowed.' }, 405);
         }
-        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|transcript|speakers|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
+        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|transcript|speakers|threads|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
         if (mediaPath) {
           const [, reviewId, action, uploadId, operation, part, sign] = mediaPath;
+          if (action === 'threads' && request.method === 'GET') {
+            if (!await reviews.get(session.user.id, reviewId)) return json({ error: 'Review not found.' }, 404);
+            return json(await createGroupingModule(env).status(session.user.id, reviewId));
+          }
           if (action === 'speakers') {
             if (!await reviews.get(session.user.id, reviewId)) return json({ error: 'Review not found.' }, 404);
             if (request.method === 'GET') return json(await createRuntimeSpeakers(env).status(session.user.id,reviewId));

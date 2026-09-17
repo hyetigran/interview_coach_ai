@@ -72,3 +72,11 @@ export const speakerConfirmations = sqliteTable('speaker_confirmations', {
   speakers: text().notNull(), revision: integer().notNull(), state: text().notNull().default('queued'), dispatchState: text('dispatch_state').notNull().default('pending'),
   confirmedAt: integer('confirmed_at').notNull(), deadline: integer().notNull().default(0), cancellationAttemptedAt: integer('cancellation_attempted_at'),
 }, table => [uniqueIndex('speaker_review_revision').on(table.reviewId, table.revision)]);
+
+export const groupingRuns = sqliteTable('grouping_runs', {
+  id:text().primaryKey(),reviewId:text('review_id').notNull(),ownerId:text('owner_id').notNull(),transcriptId:text('transcript_id').notNull(),
+  revision:integer().notNull(),state:text().notNull().default('running'),total:integer().notNull(),deadline:integer().notNull(),
+});
+export const groupingChunks = sqliteTable('grouping_chunks', {
+  id:text().primaryKey(),runId:text('run_id').notNull(),ordinal:integer().notNull(),state:text().notNull().default('queued'),result:text(),error:text(),startedAt:integer('started_at'),
+},table=>[uniqueIndex('grouping_chunk_ordinal').on(table.runId,table.ordinal)]);
