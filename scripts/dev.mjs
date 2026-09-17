@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { syncLocalOpenAI } from './local-openai.mjs';
+syncLocalOpenAI();
 const children = [];
 let stopping = false;
 function stop(code = 0) { if (stopping) return; stopping = true; clearInterval(timer); for (const child of children) { try { process.kill(-child.pid, 'SIGTERM'); } catch {} } setTimeout(() => { for (const child of children) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} } process.exit(code); }, 1000); }

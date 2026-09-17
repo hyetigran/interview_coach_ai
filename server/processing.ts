@@ -1,5 +1,5 @@
+import { transcriptionIntent } from './transcription';
 import { createHash } from 'node:crypto';
-import { z } from 'zod';
 import { validateWave } from './audio-format';
 import { MAX_AUDIO_BYTES } from '../lib/media/contracts';
 type Environment = { DB: D1Database; MEDIA: R2Bucket; LOCAL_MEDIA_ADAPTER?: string; AUTH_SECRET?: string };
@@ -23,7 +23,7 @@ export function createProcessingModule(env: Environment, dispatch?: (id: string)
     const jobs = (await db.prepare("SELECT * FROM processing_jobs WHERE state='queued' OR (state='running' AND dispatch_state='pending') ORDER BY created_at,id LIMIT 25").all<Job>()).results;
     for (const job of jobs) {
       if (job.state === 'queued') {
-        const claimed = await db.prepare(`UPDATE processing_jobs SET state='running',deadline=? WHERE id=? AND state='queued' AND ${active} AND NOT EXISTS(SELECT 1 FROM processing_jobs AS busy WHERE busy.owner_id=processing_jobs.owner_id AND busy.state='running')`).bind(Date.now() + 5 * 60000, job.id).run();
+        const claimed = await db.prepare(`UPDATE processing_jobs SET state='running',deadline=? WHERE id=? AND state='queued' AND ${active} AND NOT EXISTS(SELECT 1 FROM processing_jobs AS busy WHERE busy.owner_id=processing_jobs.owner_id AND busy.state='running') AND NOT EXISTS(SELECT 1 FROM transcriptions WHERE transcriptions.owner_id=processing_jobs.owner_id AND transcriptions.state IN ('queued','encoding','submitting'))`).bind(Date.now() + 5 * 60000, job.id).run();
         if (!claimed.meta.changes) continue;
       }
       try {
@@ -82,7 +82,7 @@ export function createProcessingModule(env: Environment, dispatch?: (id: string)
     const audio = validateWave(header.buffer, observed);
     const result: PreparationResult = { ...audio, sourceKey: upload.object_key, sourceSha256, sourceBytes: upload.size, sha256: hash.digest('hex'), bytes: observed, audioKey, audioBytes: observed, originalTimeOffsetMs: 0 };
     const publication = db.prepare(`UPDATE processing_jobs SET state='ready',result=?,error=NULL,finished_at=? WHERE id=? AND state='running' AND deadline>? AND ${active} AND EXISTS(SELECT 1 FROM uploads WHERE uploads.id=processing_jobs.upload_id AND (uploads.state='admitted' OR (uploads.state='validating' AND uploads.expires_at>?)))`).bind(JSON.stringify(result), Date.now(), id, Date.now(), Date.now());
-    const [published] = await db.batch([publication, db.prepare("UPDATE uploads SET state='admitted',admitted_at=? WHERE id=? AND state='validating' AND EXISTS(SELECT 1 FROM processing_jobs WHERE id=? AND state='ready' AND result=?)").bind(Date.now(), job.upload_id, id, JSON.stringify(result))]);
+    const [published] = await db.batch([publication, db.prepare("UPDATE uploads SET state='admitted',admitted_at=? WHERE id=? AND state='validating' AND EXISTS(SELECT 1 FROM processing_jobs WHERE id=? AND state='ready' AND result=?)").bind(Date.now(), job.upload_id, id, JSON.stringify(result)), transcriptionIntent(db, id)]);
     if (!published.meta.changes) { if (audioKey !== upload.object_key) await bucket.delete(audioKey); throw new Error('Preparation was cancelled or superseded.'); }
     return result;
   }
@@ -99,29 +99,7 @@ export function createProcessingModule(env: Environment, dispatch?: (id: string)
   return { reconcile, status, prepare, fail, cancelReview };
 }
 
-// Integer microdollars: $50 = 50,000,000 units. Unknown charges stay reserved.
-export function createBudgetLedger(db: D1Database) {
-  const amount = z.number().int().min(0).max(50000000);
-  const key = z.string().min(1).max(120);
-  async function reserve(id: string, operation: string, maximum: number) {
-    key.parse(id); key.parse(operation); amount.parse(maximum);
-    await db.prepare("INSERT OR IGNORE INTO processing_budget(id,operation,reserved_units) SELECT ?,?,? WHERE COALESCE((SELECT SUM(CASE WHEN state='reserved' THEN reserved_units ELSE COALESCE(settled_units,0) END) FROM processing_budget),0)+?<=50000000").bind(id, operation, maximum, maximum).run();
-    const row = await db.prepare('SELECT reserved_units,operation,state FROM processing_budget WHERE id=?').bind(id).first<{ reserved_units: number; operation: string; state: string }>();
-    if (row && (row.reserved_units !== maximum || row.operation !== operation)) throw new Error('Budget operation identity cannot be reused with different inputs.');
-    return row?.state === 'reserved';
-  }
-  async function settle(id: string, actual: number) {
-    key.parse(id); amount.parse(actual);
-    const row = await db.prepare('SELECT reserved_units,settled_units,state FROM processing_budget WHERE id=?').bind(id).first<{ reserved_units: number; settled_units: number | null; state: string }>();
-    if (!row || actual > row.reserved_units || (row.state === 'settled' && row.settled_units !== actual)) throw new Error('Charge does not match its reservation.');
-    const update = await db.prepare("UPDATE processing_budget SET state='settled',settled_units=? WHERE id=? AND state='reserved'").bind(actual, id).run();
-    if (!update.meta.changes) {
-      const settled = await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(id).first<{ settled_units: number }>();
-      if (settled?.settled_units !== actual) throw new Error('Budget operation was already settled differently.');
-    }
-  }
-  return { reserve, settle };
-}
+export { createBudgetLedger } from './budget';
 
 export function createRuntimeProcessing(env: Environment & { PROCESSING?: Workflow<{ jobId: string }> }) {
   return createProcessingModule(env,

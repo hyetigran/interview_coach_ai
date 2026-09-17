@@ -51,7 +51,7 @@ export function mediaServer(secret, temporaryRoot = tmpdir(), initialized = Prom
     const supplied = Buffer.from(request.headers.authorization ?? ''); const expected = Buffer.from(`Bearer ${secret}`);
     if (!secret || supplied.length !== expected.length || !timingSafeEqual(supplied, expected) || request.headers.origin) { response.writeHead(403).end(); return; }
     if (request.url === '/health' && request.method === 'GET') { response.end('Local media adapter ready'); return; }
-    const id = /^\/operations\/(prepare-[a-f0-9-]{36})$/.exec(request.url ?? '')?.[1];
+    const id = /^\/(?:operations|compression)\/(prepare-[a-f0-9-]{36})$/.exec(request.url ?? '')?.[1];
     if (!id) { response.writeHead(404).end(); return; }
     if (request.method === 'DELETE') { operations.get(id)?.abort(); response.writeHead(204).end(); return; }
     if (request.method !== 'POST') { response.writeHead(405).end(); return; }
@@ -66,8 +66,14 @@ export function mediaServer(secret, temporaryRoot = tmpdir(), initialized = Prom
       const bounded = new Transform({ transform(chunk, _encoding, callback) { observed += chunk.length; callback(observed > MAX_BYTES ? new Error('Recording exceeds 256 MiB.') : null, chunk); } });
       const source = join(directory, 'source');
       await pipeline(request, bounded, createWriteStream(source, { mode: 0o600 }), { signal: controller.signal });
-      const result = await extractAudio(source, directory, controller.signal);
-      response.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': String(result.bytes), 'Cache-Control': 'no-store' });
+      let result;
+      if (request.url.startsWith('/compression/')) {
+        const target = join(directory, 'speech.mp3');
+        await run('ffmpeg', ['-v', 'error', '-protocol_whitelist', 'file', '-format_whitelist', 'wav', '-i', source, '-map', '0:a:0', '-ac', '1', '-ar', '16000', '-b:a', '32k', '-t', '3600', '-y', target], controller.signal);
+        result = { target, bytes: (await stat(target)).size };
+        if (result.bytes > 15000000) throw new Error('Compressed recording exceeds transcription limits.');
+      } else result = await extractAudio(source, directory, controller.signal);
+      response.writeHead(200, { 'Content-Type': request.url.startsWith('/compression/') ? 'audio/mpeg' : 'audio/wav', 'Content-Length': String(result.bytes), 'Cache-Control': 'no-store' });
       await pipeline(createReadStream(result.target), response, { signal: controller.signal });
     } catch (error) {
       if (!response.headersSent && !response.destroyed) response.writeHead(422).end(controller.signal.aborted ? 'Media preparation timed out or was cancelled.' : error.message);

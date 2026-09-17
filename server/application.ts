@@ -1,3 +1,4 @@
+import { createTranscriptionModule } from './transcription';
 import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { ZodError } from 'zod';
@@ -44,9 +45,13 @@ export function createApplication(env: CloudflareEnv) {
           }
           return json({ error: 'Method not allowed.' }, 405);
         }
-        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
+        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|transcript|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
         if (mediaPath) {
           const [, reviewId, action, uploadId, operation, part, sign] = mediaPath;
+          if (action === 'transcript' && request.method === 'GET') {
+            if (!await reviews.get(session.user.id, reviewId)) return json({ error: 'Review not found.' }, 404);
+            return json(await createTranscriptionModule(env).status(session.user.id, reviewId));
+          }
           if (action === 'processing' && request.method === 'GET') {
             if (!await reviews.get(session.user.id, reviewId)) return json({ error: 'Review not found.' }, 404);
             return json(await createRuntimeProcessing(env).status(session.user.id, reviewId));

@@ -1,4 +1,5 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
+import { createTranscriptionModule } from './transcription';
 import { createRuntimeProcessing } from './processing';
 export class PreparationWorkflow extends WorkflowEntrypoint<CloudflareEnv, { jobId: string }> {
   async run(event: WorkflowEvent<{ jobId: string }>, step: WorkflowStep) {
@@ -8,6 +9,7 @@ export class PreparationWorkflow extends WorkflowEntrypoint<CloudflareEnv, { job
     } catch (error) {
       await step.do('record-preparation-failure', () => processing.fail(event.payload.jobId, error instanceof Error ? error.message : undefined));
     }
+    await step.do('transcribe-recording', { retries: { limit: 0, delay: '1 second' }, timeout: '18 minutes' }, () => createTranscriptionModule(this.env).run(event.payload.jobId));
     await step.do('dispatch-next-waiting-recording', () => processing.reconcile());
   }
 }

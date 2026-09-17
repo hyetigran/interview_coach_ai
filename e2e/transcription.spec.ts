@@ -1,0 +1,34 @@
+import { test, expect } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
+test('real OpenAI transcript survives leaving the page and supports timestamped playback', async ({ page, context }) => {
+  test.skip(!process.env.OPENAI_TEST_WAV, 'Explicit paid integration test requires a permitted OPENAI_TEST_WAV fixture.');
+  test.setTimeout(180000);
+  const email = `speech-${randomUUID()}@example.com`;
+  const invitation = execFileSync('node', ['scripts/invite.mjs', email], { encoding: 'utf8' }).trim().split('\n').at(-1)!;
+  const origin = 'http://127.0.0.1:3000';
+  const registration = await context.request.post(origin + '/api/auth/sign-up/email', { headers: { origin, 'x-invitation-token': invitation }, data: { name: 'Synthetic Speech Test', email, password: randomUUID() + randomUUID() } });
+  expect(registration.ok()).toBeTruthy();
+  const creation = await context.request.post(origin + '/api/reviews', { headers: { origin }, data: { title: 'Synthetic two-speaker interview', role: 'Software engineer', origin: 'mock' } });
+  expect(creation.ok()).toBeTruthy(); const review = await creation.json();
+  const path = origin + '/api/reviews/' + review.id;
+  const bytes = readFileSync(process.env.OPENAI_TEST_WAV!);
+  const initiation = await context.request.post(path + '/media', { headers: { origin }, data: { name: 'synthetic.wav', size: bytes.length, actionId: randomUUID() } });
+  const upload = await initiation.json();
+  const signed = await context.request.post(path + `/uploads/${upload.id}/parts/1/sign`, { headers: { origin }, data: {} });
+  const { token } = await signed.json();
+  expect((await context.request.put(path + `/uploads/${upload.id}/parts/1`, { headers: { origin, 'content-type': 'application/octet-stream', 'x-part-capability': token }, data: bytes })).ok()).toBeTruthy();
+  expect((await context.request.post(path + `/uploads/${upload.id}/complete`, { headers: { origin }, data: {} })).ok()).toBeTruthy();
+  await page.goto('/reviews');
+  await page.goto('/reviews/' + review.id);
+  await expect(page.getByRole('heading', { name: 'Transcript', exact: true })).toBeVisible({ timeout: 120000 });
+  await expect(page.getByText(/event.driven service/i)).toBeVisible();
+  await page.reload(); await expect(page.getByRole('heading', { name: 'Transcript', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /Play passage at/ }).last().click();
+  const transcript = await (await context.request.get(path + '/transcript')).json();
+  expect(transcript.state).toBe('ready'); expect(new Set(transcript.transcript.utterances.map((u: { speaker: string }) => u.speaker)).size).toBeGreaterThanOrEqual(2);
+  const deletion = await context.request.delete(path, { headers: { origin }, data: {} }); expect([202,204]).toContain(deletion.status());
+  expect((await context.request.get(path + '/transcript')).status()).toBe(404);
+});
