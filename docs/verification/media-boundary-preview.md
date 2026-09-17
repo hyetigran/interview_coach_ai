@@ -14,6 +14,16 @@ pnpm exec playwright test e2e/media-preparation.spec.ts
 
 This opt-in test creates invited synthetic accounts and MP4/H.264/AAC recordings at 3600 and 3601 seconds. It uses real upload, Workflows, private media processing, database, storage, and browser playback. It can incur media-processing charges and start automatic transcription. Reviews are deleted after assertions, with bounded best-effort deletion on failure. Temporary local media is removed.
 
+Short format and invalid-file checks can run separately:
+
+```sh
+E2E_MEDIA_FORMATS=1 \
+E2E_PREVIEW_ORIGIN=https://interview-coach-preview.hyetigran.workers.dev \
+pnpm exec playwright test e2e/media-preparation.spec.ts
+```
+
+These cases generate one-second MOV/H.264/AAC, WebM/VP8/Opus, and WebM/VP9/Opus files, plus no-audio, unsupported MPEG-4 video, and corrupt MP4 inputs. Accepted files must produce PCM playback after reload. Rejected files must show their specific error, offer no retry, and publish no playable audio. Every case checks retained-original integrity and eventual deletion cleanup. The same paid-execution caveat applies. Set both opt-in variables to run all eight cases; neither is enabled by default.
+
 ## Observations
 
 The 3600-second case passed twice, each in approximately 1.1 minutes including setup, upload, verification, and deletion. It verified a 115,200,044-byte PCM WAV, 16 kHz mono audio, zero timeline offset, the final two bytes through an authenticated range request, browser duration after reload, and the retained original's SHA-256. The second run also verified that deletion finished its pending cleanup.
