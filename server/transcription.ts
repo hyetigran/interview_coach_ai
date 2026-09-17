@@ -15,7 +15,7 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
     const row = await db.prepare(`SELECT * FROM transcriptions WHERE owner_id=? AND review_id=? AND ${active}`).bind(owner, review).first<Row>();
     if (!row) return null;
     const object = row.state === 'ready' && row.result_key ? await env.MEDIA.get(row.result_key) : null;
-    return { state: row.state, error: row.error, transcript: object ? await object.json<Transcript>() : null };
+    return { id: row.id, state: row.state, error: row.error, transcript: object ? await object.json<Transcript>() : null };
   }
   async function run(jobId: string) {
     const id = 'transcript-' + jobId; const row = await live(id);

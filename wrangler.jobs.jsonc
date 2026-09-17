@@ -29,6 +29,11 @@
       "name": "interview-coach-local-preparation",
       "binding": "PROCESSING",
       "class_name": "PreparationWorkflow"
+    },
+    {
+      "name": "interview-coach-local-continuation",
+      "binding": "CONTINUATION",
+      "class_name": "ContinuationWorkflow"
     }
   ],
   "triggers": {
@@ -62,6 +67,11 @@
           "name": "interview-coach-preview-preparation",
           "binding": "PROCESSING",
           "class_name": "PreparationWorkflow"
+        },
+        {
+          "name": "interview-coach-preview-continuation",
+          "binding": "CONTINUATION",
+          "class_name": "ContinuationWorkflow"
         }
       ],
       "triggers": {
@@ -95,6 +105,11 @@
           "name": "interview-coach-production-preparation",
           "binding": "PROCESSING",
           "class_name": "PreparationWorkflow"
+        },
+        {
+          "name": "interview-coach-production-continuation",
+          "binding": "CONTINUATION",
+          "class_name": "ContinuationWorkflow"
         }
       ],
       "triggers": {

@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { uniqueIndex, index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 export const user = sqliteTable('users', {
   id: text().primaryKey(), name: text().notNull(), email: text().notNull().unique(),
@@ -66,3 +66,9 @@ export const transcriptions = sqliteTable('transcriptions', {
   revision: integer().notNull(), state: text().notNull().default('queued'), resultKey: text('result_key'), requestId: text('request_id'),
   error: text(), startedAt: integer('started_at'), finishedAt: integer('finished_at'),
 });
+
+export const speakerConfirmations = sqliteTable('speaker_confirmations', {
+  id: text().primaryKey(), reviewId: text('review_id').notNull(), ownerId: text('owner_id').notNull(), transcriptId: text('transcript_id').notNull(),
+  speakers: text().notNull(), revision: integer().notNull(), state: text().notNull().default('queued'), dispatchState: text('dispatch_state').notNull().default('pending'),
+  confirmedAt: integer('confirmed_at').notNull(), deadline: integer().notNull().default(0), cancellationAttemptedAt: integer('cancellation_attempted_at'),
+}, table => [uniqueIndex('speaker_review_revision').on(table.reviewId, table.revision)]);

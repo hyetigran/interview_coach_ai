@@ -54,6 +54,12 @@
           "binding": "PROCESSING",
           "class_name": "PreparationWorkflow",
           "script_name": "interview-coach-jobs-preview"
+        },
+        {
+          "name": "interview-coach-preview-continuation",
+          "binding": "CONTINUATION",
+          "class_name": "ContinuationWorkflow",
+          "script_name": "interview-coach-jobs-preview"
         }
       ]
     },
@@ -88,6 +94,12 @@
           "binding": "PROCESSING",
           "class_name": "PreparationWorkflow",
           "script_name": "interview-coach-jobs-production"
+        },
+        {
+          "name": "interview-coach-production-continuation",
+          "binding": "CONTINUATION",
+          "class_name": "ContinuationWorkflow",
+          "script_name": "interview-coach-jobs-production"
         }
       ]
     }
@@ -108,6 +120,12 @@
       "name": "interview-coach-local-preparation",
       "binding": "PROCESSING",
       "class_name": "PreparationWorkflow",
+      "script_name": "interview-coach-jobs-local"
+    },
+    {
+      "name": "interview-coach-local-continuation",
+      "binding": "CONTINUATION",
+      "class_name": "ContinuationWorkflow",
       "script_name": "interview-coach-jobs-local"
     }
   ]
