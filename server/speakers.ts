@@ -24,7 +24,8 @@ export function createSpeakerModule(env: Environment, dispatch?: (id: string) =>
     await reconcile(); return await status(owner,review);
   }
   async function reconcile() {
-    await db.prepare(`UPDATE speaker_confirmations SET state='cancelled',speakers='[]' WHERE state<>'cancelled' AND NOT ${active}`).run();
+    await db.prepare(`UPDATE speaker_confirmations SET state='outdated' WHERE state NOT IN ('cancelled','outdated') AND NOT ${active} AND EXISTS(SELECT 1 FROM reviews WHERE reviews.id=speaker_confirmations.review_id AND lifecycle='active')`).run();
+    await db.prepare("UPDATE speaker_confirmations SET state='cancelled',speakers='[]' WHERE state<>'cancelled' AND NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=speaker_confirmations.review_id AND lifecycle='active')").run();
     await db.prepare("UPDATE speaker_confirmations SET state='failed' WHERE state='running' AND deadline<=?").bind(Date.now()).run();
     if (!dispatch) return;
     const rows = (await db.prepare("SELECT * FROM speaker_confirmations WHERE state='queued' OR (state='running' AND dispatch_state='pending') ORDER BY confirmed_at LIMIT 25").all<Row>()).results;

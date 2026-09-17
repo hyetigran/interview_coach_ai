@@ -1,3 +1,4 @@
+import {coachingDependencyKey} from '../lib/transcript-corrections';
 import {contextSnapshot} from './review-context';
 import {contextSources} from '../lib/review-context';
 import { groupingWindows } from '../lib/threads';
@@ -33,6 +34,7 @@ export function createCoachingModule(env:Environment,request:typeof fetch=fetch)
   const windows=groupingWindows(transcript);
   const completed=(await db.prepare("SELECT ordinal FROM grouping_chunks WHERE run_id=? AND state='ready'").bind(groupingId).all<{ordinal:number}>()).results;
   for(const chunk of completed)for(const utterance of windows[chunk.ordinal]??[])covered.add(positions.get(utterance.id)!);
+  const reusable=(await db.prepare("SELECT j.sources,j.result FROM coaching_jobs j JOIN coaching_runs r ON r.id=j.run_id WHERE r.review_id=? AND r.owner_id=? AND r.revision<? AND r.context_revision=? AND r.model=? AND r.prompt_version=? AND r.rubric_version=? AND r.schema_version=? AND r.verification_version=? AND j.state IN ('ready','outdated') AND j.sources IS NOT NULL AND j.result IS NOT NULL ORDER BY r.revision DESC").bind(grouping.review_id,grouping.owner_id,current.revision,current.context_revision,versions.model,versions.prompt,versions.rubric,versions.schema,versions.verification).all<{sources:string;result:string}>()).results;
   const roots=status.groups.filter(g=>!g.parentId);
   for(const group of roots) {
    const sources=coachingSources(group,status.groups);sources.role=context.context.role;sources.context=contextSources(context.id,context.context);
@@ -41,7 +43,8 @@ export function createCoachingModule(env:Environment,request:typeof fetch=fetch)
    for(let position=group.question[0].position;position<end;position++)if(!covered.has(position)){sources.incomplete=true;break;}
 
    const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(id+group.id))),b=>b.toString(16).padStart(2,'0')).join('');
-   await db.prepare(`INSERT OR IGNORE INTO coaching_jobs(id,run_id,thread_id,sources) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM coaching_runs WHERE id=? AND state='running' AND ${active})`).bind('coach-'+hash,id,group.id,JSON.stringify(sources),id).run();
+   const reused=reusable.find(old=>coachingDependencyKey(JSON.parse(old.sources))===coachingDependencyKey(sources));
+   await db.prepare(`INSERT OR IGNORE INTO coaching_jobs(id,run_id,thread_id,sources,state,result) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM coaching_runs WHERE id=? AND state='running' AND ${active})`).bind('coach-'+hash,id,group.id,reused?.sources??JSON.stringify(sources),reused?'ready':'queued',reused?.result??null,id).run();
   }
   return (await db.prepare('SELECT id FROM coaching_jobs WHERE run_id=? ORDER BY rowid').bind(id).all<{id:string}>()).results.map(r=>r.id);
  }

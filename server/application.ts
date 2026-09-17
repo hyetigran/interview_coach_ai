@@ -1,3 +1,4 @@
+import {createCorrectionModule,CorrectionError} from './transcript-corrections';
 import {createPreparationModule,PreparationError} from './preparation';
 import {createContextModule,ContextError} from './review-context';
 import {createReanalysisModule} from './reanalysis';
@@ -80,6 +81,10 @@ export function createApplication(env: CloudflareEnv) {
             if (request.method === 'GET') return json(await createRuntimeSpeakers(env).status(session.user.id,reviewId));
             if (request.method === 'POST') return json(await createRuntimeSpeakers(env).confirm(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,16000)))));
           }
+          if(action==='transcript'&&['PATCH','POST'].includes(request.method)) {
+            const corrections=createCorrectionModule(env),body=JSON.parse(new TextDecoder().decode(await boundedBytes(request,205000)));
+            return json(request.method==='PATCH'?await corrections.save(session.user.id,reviewId,body):await corrections.refresh(session.user.id,reviewId,body));
+          }
           if (action === 'transcript' && request.method === 'GET') {
             if (!await reviews.get(session.user.id, reviewId)) return json({ error: 'Review not found.' }, 404);
             return json(await createTranscriptionModule(env).status(session.user.id, reviewId));
@@ -112,6 +117,7 @@ export function createApplication(env: CloudflareEnv) {
         }
         return json({ error: 'Not found.' }, 404);
       } catch (error) {
+        if (error instanceof CorrectionError) return json({error:error.message},error.status);
         if (error instanceof PreparationError) return json({error:error.message},error.status);
         if (error instanceof ContextError) return json({error:error.message},error.status);
         if (error instanceof SpeakerError) return json({ error: error.message }, error.status);

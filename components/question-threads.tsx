@@ -5,13 +5,13 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { Evidence, QuestionGroup } from '@/lib/threads';
 import { Button } from './ui/button';
-type State = {state:string;total:number;completed:number;errors:{section:number;error:string|null}[];groups:QuestionGroup[]} | null;
+type State = {previous?:{groups:QuestionGroup[];advice:{threadId:string;result:import('@/lib/coaching').CoachingResult}[]}|null;state:string;total:number;completed:number;errors:{section:number;error:string|null}[];groups:QuestionGroup[]} | null;
 export function QuestionThreads({reviewId}:{reviewId:string}) {
   const audio=useRef<HTMLAudioElement>(null);
   const query=useQuery({queryKey:['threads',reviewId],queryFn:()=>api<State>(`/api/reviews/${reviewId}/threads`),refetchInterval:q=>!q.state.data||q.state.data.state==='running'?3000:false});
   if(query.error)return <p role="alert">Unable to load question threads. Reload to retry.</p>;
   if(!query.data)return null;
-  const {state,total,completed,groups,errors}=query.data;
+  const {state,total,completed,groups,errors,previous}=query.data;
   function evidence(items:Evidence[]) {return <ul className="space-y-2">{items.map(item=><li key={`${item.utteranceId}:${item.start}:${item.end}`}>
     <blockquote className="whitespace-pre-wrap">{item.quote}</blockquote>
     <Button variant="ghost" onClick={()=>{if(audio.current){audio.current.currentTime=item.startMs/1000;void audio.current.play().catch(()=>{});}}}>Play passage at {Math.floor(item.startMs/60000)}:{String(Math.floor(item.startMs/1000)%60).padStart(2,'0')}</Button>
@@ -32,7 +32,12 @@ export function QuestionThreads({reviewId}:{reviewId:string}) {
     {errors.map(error=><p key={error.section}>Section {error.section}: {error.error}</p>)}
     <p className="text-sm text-muted-foreground">Automatic groupings can be wrong. Playback starts at the source passage; word-level timing is unavailable. Logistics and candidate questions remain in the full transcript.</p>
     <audio ref={audio} controls preload="none" src={`/api/reviews/${reviewId}/audio`} aria-label="Question evidence playback" />
-    {!groups.length&&state!=='running'&&<p>No supported interview questions were found in the completed sections.</p>}
+    {!groups.length&&!['running','outdated'].includes(state)&&<p>No supported interview questions were found in the completed sections.</p>}
     <ol className="space-y-3">{groups.filter(g=>!g.parentId).map(g=>thread(g))}</ol>
+    {state==='outdated'&&<p role="status">Transcript wording changed. Refresh analysis to update affected question threads and coaching.</p>}
+    {previous&&<details><summary className="cursor-pointer">Earlier question threads and advice</summary><p>This snapshot precedes your correction. It remains readable as historical evidence and may be outdated.</p>
+      {previous.groups.map(group=><section key={group.id} className="my-3 space-y-2 border p-3"><h4>{group.question.map(q=>q.quote).join(' ')}</h4>{evidence(group.answers)}{previous.advice.filter(a=>a.threadId===group.id).map(advice=><div key={advice.threadId}><p>{advice.result.rationale}</p><p className="whitespace-pre-wrap">{advice.result.segments.map(s=>s.text).join(' ')}</p></div>)}</section>)}
+    </details>}
+
   </section>;
 }

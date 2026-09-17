@@ -171,3 +171,11 @@ historical citations and saved work; whole-review deletion removes them.
 Candidates can edit a proposed future answer and save up to three priorities per review. Each answer revision retains its original thread, coaching result and evidence snapshot; older preparation stays editable when analysis changes. Saved evidence is available from the preparation panel. These writes never trigger paid processing or become transcript/background facts.
 
 Answer text is limited to 10,000 characters; each priority to 500 characters. Conditional versions reject concurrent overwrites and the editor preserves its draft until the candidate explicitly loads the latest saved version. Whole-review deletion erases all saved revisions and priorities and clears the review's private query caches.
+
+### Transcript wording corrections
+
+Passage corrections create immutable transcript versions and retain the original transcript, media, prior evidence and saved preparation. Candidates confirm that corrections reflect recorded speech; new career facts belong in selected background. Passage timestamps remain the original enclosing audio range, without invented word timing.
+
+Saving revokes affected generation immediately without starting paid calls. Explicit refresh reuses the last analysis's identical grouping prefix only when candidate-speaker labels also match; a changed window invalidates its downstream carried-question dependencies. Coaching is reused only when all substantive supplied sources/metadata and generation versions match. Repeated corrections before a refresh compare against the actual earlier analysis snapshot. Earlier advice stays readable as potentially outdated history.
+
+Correction text is bounded to 50,000 characters per passage and the complete transcript to 8 MB. Conditional versions preserve drafts on conflicts; older GET responses cannot rewind the displayed transcript. Registered object intents make interrupted correction writes discoverable for cleanup, and review deletion removes corrected snapshots.

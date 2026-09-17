@@ -3,7 +3,7 @@ import { createBudgetLedger } from './budget';
 import type { PreparationResult } from './processing';
 import { parseTranscript, type Transcript } from '../lib/transcript';
 type Environment = Pick<CloudflareEnv, 'DB' | 'MEDIA' | 'AUTH_SECRET' | 'OPENAI_API_KEY' | 'LOCAL_MEDIA_ADAPTER'>;
-type Row = { id: string; review_id: string; owner_id: string; job_id: string; revision: number; state: string; result_key: string | null; error: string | null };
+type Row = { id: string; review_id: string; owner_id: string; job_id: string; revision: number; state: string; result_key: string | null; error: string | null; parent_id:string|null };
 const active = "EXISTS(SELECT 1 FROM reviews WHERE reviews.id=transcriptions.review_id AND reviews.owner_id=transcriptions.owner_id AND reviews.lifecycle='active' AND reviews.input_revision=transcriptions.revision)";
 export function transcriptionIntent(db: D1Database, jobId: string) {
   return db.prepare("INSERT OR IGNORE INTO transcriptions(id,review_id,owner_id,job_id,revision) SELECT 'transcript-'||id,review_id,owner_id,id,revision FROM processing_jobs WHERE id=? AND state='ready'").bind(jobId);
@@ -15,7 +15,7 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
     const row = await db.prepare(`SELECT * FROM transcriptions WHERE owner_id=? AND review_id=? AND ${active}`).bind(owner, review).first<Row>();
     if (!row) return null;
     const object = row.state === 'ready' && row.result_key ? await env.MEDIA.get(row.result_key) : null;
-    return { id: row.id, state: row.state, error: row.error, transcript: object ? await object.json<Transcript>() : null };
+    return { id: row.id, parentId:row.parent_id, revision:row.revision, state: row.state, error: row.error, transcript: object ? await object.json<Transcript>() : null };
   }
   async function run(jobId: string) {
     const id = 'transcript-' + jobId; const row = await live(id);
@@ -68,7 +68,7 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
     }
   }
   async function cleanup() {
-    await db.prepare(`UPDATE transcriptions SET state='cancelled',error=NULL,result_key=NULL WHERE state<>'cancelled' AND NOT ${active}`).run();
+    await db.prepare(`UPDATE transcriptions SET state='cancelled',error=NULL,result_key=NULL WHERE state<>'cancelled' AND ((state<>'ready' AND NOT ${active}) OR NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=transcriptions.review_id AND reviews.lifecycle='active'))`).run();
     const cancelled = (await db.prepare("SELECT review_id,id FROM transcriptions WHERE state='cancelled'").all<{ review_id: string; id: string }>()).results;
     for (const row of cancelled) await env.MEDIA.delete([`transcripts/${row.review_id}/${row.id}.json`, `transcripts/${row.review_id}/${row.id}.provider.json`]);
     // A process crash after submitting cannot trigger another paid request.

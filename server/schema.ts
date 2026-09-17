@@ -63,6 +63,7 @@ export const processingBudget = sqliteTable('processing_budget', {
 });
 
 export const transcriptions = sqliteTable('transcriptions', {
+  parentId:text('parent_id'),correctedUtteranceId:text('corrected_utterance_id'),
   id: text().primaryKey(), reviewId: text('review_id').notNull(), ownerId: text('owner_id').notNull(), jobId: text('job_id').notNull().unique(),
   revision: integer().notNull(), state: text().notNull().default('queued'), resultKey: text('result_key'), requestId: text('request_id'),
   error: text(), startedAt: integer('started_at'), finishedAt: integer('finished_at'),
@@ -95,3 +96,5 @@ export const coachingJobs = sqliteTable('coaching_jobs',{
 export const reviewContextVersions=sqliteTable('review_context_versions',{id:text().primaryKey(),reviewId:text('review_id').notNull(),revision:integer().notNull(),body:text().notNull(),createdAt:integer('created_at').notNull()},table=>[uniqueIndex('context_review_revision').on(table.reviewId,table.revision)]);
 export const reviewPriorities=sqliteTable('review_priorities',{reviewId:text('review_id').primaryKey(),version:integer().notNull(),body:text().notNull(),updatedAt:integer('updated_at').notNull()});
 export const savedAnswers=sqliteTable('saved_answers',{id:text().primaryKey(),reviewId:text('review_id').notNull(),coachingJobId:text('coaching_job_id').notNull(),threadId:text('thread_id').notNull(),version:integer().notNull(),body:text().notNull(),sources:text().notNull(),coachingResult:text('coaching_result').notNull(),createdAt:integer('created_at').notNull()},table=>[uniqueIndex('saved_answer_version').on(table.reviewId,table.coachingJobId,table.version)]);
+
+export const transcriptCorrectionIntents=sqliteTable('transcript_correction_intents',{id:text().primaryKey(),reviewId:text('review_id').notNull(),ownerId:text('owner_id').notNull(),parentId:text('parent_id').notNull(),revision:integer().notNull(),resultKey:text('result_key').notNull(),state:text().notNull().default('preparing'),createdAt:integer('created_at').notNull(),reuseGroupingId:text('reuse_grouping_id'),reusePrefix:integer('reuse_prefix').notNull().default(0)});

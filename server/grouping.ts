@@ -1,3 +1,4 @@
+import {rebaseUnchangedGroups} from '../lib/transcript-corrections';
 import { requestStructured, structuredCharge, structuredOutput, STRUCTURED_RESERVATION } from './openai-structured';
 import { transcriptSchema } from '../lib/transcript';
 import { groupingSchema, groupingJsonSchema, groupingWindows, mergeGroups, resolveGroups, type QuestionGroup } from '../lib/threads';
@@ -37,6 +38,14 @@ export function createGroupingModule(env:Environment, request:typeof fetch=fetch
   async function ensureChunks(run:Run) {
     const {id,total}=run;
     for(let ordinal=0;ordinal<total;ordinal++) await db.prepare("INSERT OR IGNORE INTO grouping_chunks(id,run_id,ordinal) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM grouping_runs WHERE id=? AND state='running')").bind(`group-${id}-${ordinal}`,id,ordinal,id).run();
+    const reuse=await db.prepare("SELECT reuse_grouping_id,reuse_prefix FROM transcript_correction_intents WHERE id=? AND state='published'").bind(run.transcript_id).first<{reuse_grouping_id:string|null;reuse_prefix:number}>();
+    const oldSpeakers=reuse?.reuse_grouping_id?await db.prepare('SELECT speakers FROM speaker_confirmations WHERE id=?').bind(reuse.reuse_grouping_id).first<{speakers:string}>():null;
+    const currentSpeakers=await db.prepare('SELECT speakers FROM speaker_confirmations WHERE id=?').bind(id).first<{speakers:string}>();
+    const sameSpeakers=oldSpeakers&&currentSpeakers&&JSON.stringify(JSON.parse(oldSpeakers.speakers).sort())===JSON.stringify(JSON.parse(currentSpeakers.speakers).sort());
+    if(reuse?.reuse_grouping_id&&sameSpeakers) {
+      const prior=(await db.prepare("SELECT ordinal,result FROM grouping_chunks WHERE run_id=? AND ordinal<? AND state='ready' AND result IS NOT NULL ORDER BY ordinal").bind(reuse.reuse_grouping_id,reuse.reuse_prefix).all<{ordinal:number;result:string}>()).results;
+      for(const chunk of prior)await db.prepare(`UPDATE grouping_chunks SET state='ready',result=? WHERE run_id=? AND ordinal=? AND state='queued' AND EXISTS(SELECT 1 FROM grouping_runs WHERE id=? AND state='running' AND ${active})`).bind(JSON.stringify(rebaseUnchangedGroups(JSON.parse(chunk.result),run.transcript_id)),id,chunk.ordinal,id).run();
+    }
   }
   async function runChunk(id:string,ordinal:number) {
     const run=await live(id); if(!run||run.state!=='running'||run.deadline<=Date.now()) return;
@@ -87,12 +96,20 @@ export function createGroupingModule(env:Environment, request:typeof fetch=fetch
   }
   async function status(owner:string,review:string) {
     const run=await db.prepare(`SELECT * FROM grouping_runs WHERE owner_id=? AND review_id=? AND ${active} ORDER BY revision DESC LIMIT 1`).bind(owner,review).first<Run>();
-    if(!run)return null;
+    const old=await db.prepare("SELECT g.* FROM grouping_runs g JOIN reviews r ON r.id=g.review_id WHERE g.owner_id=? AND g.review_id=? AND r.lifecycle='active' AND g.revision<r.input_revision AND g.state<>'cancelled' ORDER BY g.revision DESC LIMIT 1").bind(owner,review).first<Run>();
+    let previous=null;
+    if(old){
+      const groups=mergeGroups((await chunks(old.id)).filter(c=>c.result).flatMap(c=>JSON.parse(c.result!) as QuestionGroup[]));
+      const advice=(await db.prepare("SELECT j.thread_id,j.result FROM coaching_jobs j JOIN coaching_runs c ON c.id=j.run_id WHERE c.id=(SELECT id FROM coaching_runs WHERE grouping_id=? ORDER BY context_revision DESC LIMIT 1) AND j.result IS NOT NULL").bind(old.id).all<{thread_id:string;result:string}>()).results;
+      previous={groups,advice:advice.map(row=>({threadId:row.thread_id,result:JSON.parse(row.result) as import('../lib/coaching').CoachingResult}))};
+    }
+    if(!run)return previous?{state:'outdated',total:0,completed:0,errors:[],groups:[],previous}:null;
     const rows=await chunks(run.id);
-    return {state:run.state,total:run.total,completed:rows.filter(c=>c.state==='ready').length,errors:rows.filter(c=>c.error).map(c=>({section:c.ordinal+1,error:c.error})),groups:mergeGroups(rows.filter(c=>c.result).flatMap(c=>JSON.parse(c.result!) as QuestionGroup[]))};
+    return {state:run.state,total:run.total,completed:rows.filter(c=>c.state==='ready').length,errors:rows.filter(c=>c.error).map(c=>({section:c.ordinal+1,error:c.error})),groups:mergeGroups(rows.filter(c=>c.result).flatMap(c=>JSON.parse(c.result!) as QuestionGroup[])),previous};
   }
   async function cleanup() {
-    await db.prepare(`UPDATE grouping_runs SET state='cancelled' WHERE state<>'cancelled' AND NOT ${active}`).run();
+    await db.prepare(`UPDATE grouping_runs SET state='outdated' WHERE state NOT IN ('cancelled','outdated') AND NOT ${active} AND EXISTS(SELECT 1 FROM reviews WHERE reviews.id=grouping_runs.review_id AND lifecycle='active')`).run();
+    await db.prepare("UPDATE grouping_runs SET state='cancelled' WHERE state<>'cancelled' AND NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=grouping_runs.review_id AND lifecycle='active')").run();
     await db.prepare("UPDATE grouping_chunks SET state='cancelled',result=NULL,error=NULL WHERE run_id IN (SELECT id FROM grouping_runs WHERE state='cancelled')").run();
     const cancelled=(await db.prepare("SELECT grouping_chunks.id,grouping_runs.review_id FROM grouping_chunks JOIN grouping_runs ON grouping_runs.id=grouping_chunks.run_id WHERE grouping_runs.state='cancelled'").all<{id:string;review_id:string}>()).results;
     for(const row of cancelled) await env.MEDIA.delete(`grouping/${row.review_id}/${row.id}.provider.json`);
