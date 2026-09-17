@@ -13,6 +13,7 @@ for(const stage of ['grouping','coaching'] as const)test(`candidate retries ${st
  const invitation=execFileSync('node',['scripts/invite.mjs',email,...invitationFlags],{encoding:'utf8'}).trim().split('\n').at(-1)!;
  const signup=await registerInvited(context.request,{headers:{origin,'x-invitation-token':invitation},data:{name:'Recovery Test',email,password:randomUUID()+randomUUID()}});expect(signup.ok()).toBeTruthy();const owner=(await signup.json()).user.id;
  const review=await (await context.request.post('/api/reviews',{headers:{origin},data:{title:`${stage} recovery`,role:'Engineer',origin:'mock'}})).json(),endpoint=`/api/reviews/${review.id}`;
+ try{
  const transcriptId=randomUUID(),run=randomUUID(),job='coach-'+randomUUID(),key=`transcripts/${review.id}/${transcriptId}.json`;
  // Candidate-only grouping and incomplete coaching deterministically require no
  // provider request. Auth, retry admission, Workflow, D1 and R2 remain real.
@@ -40,4 +41,5 @@ for(const stage of ['grouping','coaching'] as const)test(`candidate retries ${st
  await expect(page.getByRole('button',{name:stage==='grouping'?'Retry question grouping':'Retry coaching',exact:true})).toHaveCount(0);
  const ledger=JSON.parse(execFileSync('pnpm',['exec','wrangler','d1','execute','DB',...databaseFlags,'--json','--command',`SELECT state,settled_units FROM processing_budget WHERE id IN (${(stage==='grouping'?['group-'+run+'-0-attempt-1']:[job+'-attempt-1-draft',job+'-attempt-1-verify']).map(sql).join(',')})`],{encoding:'utf8'}));expect(ledger[0].results.length).toBeGreaterThan(0);for(const row of ledger[0].results)expect(row).toEqual({state:'settled',settled_units:0});
  await context.request.delete(endpoint,{headers:{origin},data:{}});
+ }finally{await context.request.delete(endpoint,{headers:{origin},data:{},timeout:10000}).catch(()=>{});}
 });

@@ -11,6 +11,7 @@ test('candidate retries an expired voice confirmation without retranscribing',as
  const invitation=execFileSync('node',['scripts/invite.mjs',email,...invitationFlags],{encoding:'utf8'}).trim().split('\n').at(-1)!;
  const signup=await registerInvited(context.request,{headers:{origin,'x-invitation-token':invitation},data:{name:'Correction Test',email,password:randomUUID()+randomUUID()}});expect(signup.ok()).toBeTruthy();const owner=(await signup.json()).user.id;
  const review=await (await context.request.post('/api/reviews',{headers:{origin},data:{title:'Confirmation recovery test',role:'Engineer',origin:'mock'}})).json();const endpoint=`/api/reviews/${review.id}`,id=randomUUID(),key=`transcripts/${review.id}/${id}.json`;
+ try{
  const transcript={version:1,model:'gpt-4o-transcribe-diarize',audioSha256:'fixture',durationMs:2000,utterances:[{id:'q',speaker:'B',text:'What did you build?',startMs:0,endMs:1000,overlap:false},{id:'a',speaker:'B',text:'I built a repeated repeated café.',startMs:1000,endMs:2000,overlap:false}]};
  const confirmation=randomUUID();
  const folder=mkdtempSync(join(tmpdir(),'correction-fixture-'));
@@ -21,4 +22,5 @@ test('candidate retries an expired voice confirmation without retranscribing',as
  const current=await (await context.request.get(endpoint+'/speakers')).json();expect(current.id).not.toBe(confirmation);expect(current.transcriptId).toBe(id);expect(current.speakers).toEqual(['B']);
  await page.reload();await expect(page.getByRole('button',{name:'Retry saved voice confirmation',exact:true})).toHaveCount(0);expect((await (await context.request.get(endpoint+'/transcript')).json()).id).toBe(id);
  await context.request.delete(endpoint,{headers:{origin},data:{}});expect((await context.request.patch(endpoint+'/speakers',{headers:{origin},data:{actionId:randomUUID(),targetId:current.id}})).status()).toBe(404);
+ }finally{await context.request.delete(endpoint,{headers:{origin},data:{},timeout:10000}).catch(()=>{});}
 });
