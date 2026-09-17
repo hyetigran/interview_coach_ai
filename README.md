@@ -35,7 +35,7 @@ Integration tests use real local D1 through Miniflare. Browser tests run the bui
 
 ## Cloudflare deployment
 
-Preview and production use distinct Workers and D1 databases. The repository configuration includes their binding names; actual remote database identifiers and application origins must be set after provisioning. Never bind preview to production storage.
+Preview and production use distinct Workers and D1 databases. The repository configuration contains the provisioned database IDs and exact application origins. Preview is deployed at https://interview-coach-preview.hyetigran.workers.dev; production has an isolated database and secret but the application has not been deployed there. Never bind preview to production storage.
 
 1. Authenticate using `wrangler login` or a scoped Cloudflare API token.
 2. Create the preview and production D1 databases and record each returned ID under its matching environment binding.
@@ -55,3 +55,14 @@ E2E_PREVIEW_ORIGIN=https://interview-coach-preview.<account-subdomain>.workers.d
 ```
 
 This command creates two synthetic invited accounts in preview D1 using the authenticated Wrangler CLI. It verifies unauthenticated denial, owner isolation, same-origin mutation protection, create/reload/new-session persistence, and deletion. It deletes the test review; synthetic accounts remain in preview. The test refuses production origins.
+
+### Deployment evidence (2026-09-17 UTC)
+
+Preview Worker version `559b7f80-767b-4052-a9b9-4cddb6743b40` passed the deployed browser smoke test (23.8 seconds): invited registration, create/reload/new-session persistence, unauthenticated denial, cross-owner read/list/delete isolation, cross-origin mutation rejection, and owner deletion. Both isolated D1 databases have migration `0000_reviews.sql`; each environment has a separately generated `AUTH_SECRET` stored in Cloudflare.
+
+Workers Builds is not yet connected. The CLI OAuth credential receives HTTP 403 from its API. Connect the preview Worker to `hyetigran/interview_coach_ai` in Settings → Builds using branch `feat/1-invited-reviews` during acceptance, then change it to `main` after merge. Use:
+
+- Build: `pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm exec opennextjs-cloudflare build --env preview`
+- Deploy: `pnpm exec wrangler d1 migrations apply DB --remote --env preview && pnpm exec opennextjs-cloudflare deploy --env preview`
+
+Require a successful connected build before treating the selected deployment path as complete. Production app deployment remains a separate release action.
