@@ -1,6 +1,6 @@
 # Independent quality evaluation
 
-Status: **prepared protocol and tooling; corpus, independent reviewers, and measured results are not yet available**. This work supports ticket #14. Author fixtures demonstrate the evaluation tool, not transcription accuracy, useful coaching, or product demand.
+Status: **prepared protocol and tooling; evaluation material exists, but its private path and independent reviewer availability are pending**. The material has not yet been inspected or frozen, and no measured results are available. This work supports ticket #14. Author fixtures demonstrate the evaluation tool, not transcription accuracy, useful coaching, or product demand.
 
 ## Evidence needed before completion
 
