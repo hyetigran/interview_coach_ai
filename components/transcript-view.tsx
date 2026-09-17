@@ -1,10 +1,11 @@
 'use client';
+import { SpeakerConfirmation } from './speaker-confirmation';
 import { useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import type { Transcript } from '@/lib/transcript';
 import { Button } from './ui/button';
-type State = { state: string; error: string | null; transcript: Transcript | null } | null;
+type State = { id: string; state: string; error: string | null; transcript: Transcript | null } | null;
 export function TranscriptView({ reviewId }: { reviewId: string }) {
   const audio = useRef<HTMLAudioElement>(null); const [page, setPage] = useState(0);
   const query = useQuery({ queryKey: ['transcript', reviewId], queryFn: () => api<State>(`/api/reviews/${reviewId}/transcript`), refetchInterval: query => !query.state.data || ['queued', 'encoding', 'submitting'].includes(query.state.data.state) ? 2000 : false });
@@ -16,6 +17,7 @@ export function TranscriptView({ reviewId }: { reviewId: string }) {
   return <section className="mt-6 space-y-4" aria-labelledby="transcript-heading">
     <h3 id="transcript-heading" className="font-semibold">Transcript</h3>
     <p className="text-sm text-muted-foreground">Machine transcription may contain errors. Speaker labels are unconfirmed. Confirm your voice before coaching. Confidence scores and word-level timing are not provided by this model.</p>
+    <SpeakerConfirmation reviewId={reviewId} transcriptId={state.id} transcript={state.transcript} />
     <audio ref={audio} controls preload="none" src={`/api/reviews/${reviewId}/audio`} aria-label="Transcript passage playback" />
     {!utterances.length && <p>No speech was detected. Listen to your recording to check it.</p>}
     <ol className="space-y-4">{visible.map(utterance => <li key={utterance.id} className="rounded-md border p-3">

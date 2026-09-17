@@ -66,3 +66,9 @@ export const transcriptions = sqliteTable('transcriptions', {
   revision: integer().notNull(), state: text().notNull().default('queued'), resultKey: text('result_key'), requestId: text('request_id'),
   error: text(), startedAt: integer('started_at'), finishedAt: integer('finished_at'),
 });
+
+export const speakerConfirmations = sqliteTable('speaker_confirmations', {
+  id: text().primaryKey(), reviewId: text('review_id').notNull().unique(), ownerId: text('owner_id').notNull(), transcriptId: text('transcript_id').notNull(),
+  speakers: text().notNull(), revision: integer().notNull(), state: text().notNull().default('queued'), dispatchState: text('dispatch_state').notNull().default('pending'),
+  confirmedAt: integer('confirmed_at').notNull(), deadline: integer().notNull().default(0), cancellationAttemptedAt: integer('cancellation_attempted_at'),
+});
