@@ -106,7 +106,13 @@ export function createMediaModule(env: Environment) {
     if (!claimed.meta.changes) return view((await owned(owner, review, id)));
     try {
       let object = await bucket.head(row.object_key);
-      if (!object) object = await bucket.resumeMultipartUpload(row.object_key, row.multipart_id).complete(uploaded.map(p => ({ partNumber: p.number, etag: p.etag })));
+      if (!object) {
+        await bucket.resumeMultipartUpload(row.object_key, row.multipart_id).complete(uploaded.map(p => ({ partNumber: p.number, etag: p.etag })));
+        // Hosted R2 completion responses can omit HTTP metadata. Validate the
+        // stored object rather than treating that response as a complete HEAD.
+        object = await bucket.head(row.object_key);
+      }
+      if (!object) throw new Error('Completed recording is unavailable. Retry completion.');
       if (object.size !== row.size || object.size > MAX_AUDIO_BYTES || object.httpMetadata?.contentType !== (/\.wav$/i.test(row.name) ? 'audio/wav' : 'application/octet-stream')) throw new MediaError(422, 'Stored recording metadata does not match the upload.');
       if (/\.wav$/i.test(row.name)) { const header = await bucket.get(row.object_key, { range: { offset: 0, length: 44 } });
       if (!header) throw new Error('Recording unavailable'); try { validateWave(await header.arrayBuffer(), object.size); } catch (error) { throw new MediaError(422, error instanceof Error ? error.message : 'Invalid audio.'); } }
