@@ -60,9 +60,11 @@ This command creates two synthetic invited accounts in preview D1 using the auth
 
 Preview Worker version `559b7f80-767b-4052-a9b9-4cddb6743b40` passed the deployed browser smoke test (23.8 seconds): invited registration, create/reload/new-session persistence, unauthenticated denial, cross-owner read/list/delete isolation, cross-origin mutation rejection, and owner deletion. Both isolated D1 databases have migration `0000_reviews.sql`; each environment has a separately generated `AUTH_SECRET` stored in Cloudflare.
 
-Workers Builds is not yet connected. The CLI OAuth credential receives HTTP 403 from its API. Connect the preview Worker to `hyetigran/interview_coach_ai` in Settings → Builds using branch `feat/1-invited-reviews` during acceptance, then change it to `main` after merge. Use:
+Workers Builds is not yet connected. The CLI OAuth credential receives HTTP 403 from its API. Connect the preview Worker to `hyetigran/interview_coach_ai` in Settings → Builds using the persistent `staging` branch. Feature PRs merge into staging after review and CI; deployed acceptance then gates ticket closure. A separate release PR promotes accepted changes from staging to main. Use:
 
 - Build: `pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm exec opennextjs-cloudflare build --env preview`
 - Deploy: `pnpm exec wrangler d1 migrations apply DB --remote --env preview && pnpm exec opennextjs-cloudflare deploy --env preview`
 
-Require a successful connected build before treating the selected deployment path as complete. Production app deployment remains a separate release action.
+Require a successful connected staging build before treating the selected deployment path as complete. Production app deployment remains a separate release action.
+
+GitHub checks run on feature PRs and pushes to both `staging` and `main`. Set the preview Worker’s build branch to `staging`; do not connect its preview database to the production Worker.
