@@ -11,6 +11,7 @@
     "binding": "ASSETS"
   },
   "vars": {
+    "LOCAL_MEDIA_ADAPTER": "http://127.0.0.1:8790",
     "APP_ORIGIN": "http://127.0.0.1:3000",
     "RECORDING_ALLOWANCE": "3"
   },

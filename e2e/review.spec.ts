@@ -72,14 +72,14 @@ test('invited candidate creates, reopens after sign-in, and deletes a review', a
     header.setUint32(24, 16000, true); header.setUint32(28, 32000, true); header.setUint16(32, 2, true); header.setUint16(34, 16, true); header.setUint32(40, size - 44, true);
     const audioPath = join(folder, 'synthetic.wav'); writeFileSync(audioPath, bytes);
     await page.route('**/parts/2', route => route.abort('failed'), { times: 1 });
-    await page.getByLabel('WAV recording', { exact: true }).setInputFiles(audioPath);
+    await page.getByLabel('Interview recording file', { exact: true }).setInputFiles(audioPath);
     await page.getByRole('button', { name: 'Upload recording', exact: true }).click();
     await expect(page.getByRole('alert').filter({ hasText: /fetch|network/i })).toBeVisible();
     await page.reload();
     await expect(page.getByText(/Reselect the original file to resume/)).toBeVisible();
-    await page.getByLabel('WAV recording', { exact: true }).setInputFiles(audioPath);
+    await page.getByLabel('Interview recording file', { exact: true }).setInputFiles(audioPath);
     await page.getByRole('button', { name: 'Resume upload', exact: true }).click();
-    await expect(page.getByLabel('Private interview recording')).toBeVisible();
+    await expect(page.getByLabel('Private interview recording')).toBeVisible({ timeout: 30000 });
     await page.goto('/reviews');
     await page.goto(savedUrl);
     await expect(page.getByText('Recording prepared', { exact: true })).toBeVisible({ timeout: 30000 });
@@ -89,6 +89,28 @@ test('invited candidate creates, reopens after sign-in, and deletes a review', a
     expect((await audio.body()).byteLength).toBe(44);
     expect((await page.request.get(endpoint + '/audio', { headers: { range: 'bytes=999999999-' } })).status()).toBe(416);
   } finally { rmSync(folder, { recursive: true, force: true }); }
+  const videoFolder = mkdtempSync(join(tmpdir(), 'interview-coach-video-'));
+  try {
+    const videoPath = join(videoFolder, 'interview.mp4');
+    execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'color=size=64x64:rate=10:duration=2', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-c:v', 'libx264', '-c:a', 'aac', '-shortest', videoPath]);
+    await page.goto('/reviews');
+    await page.getByLabel('Review title').fill('Video interview');
+    await page.getByLabel('Target role').fill('Engineer');
+    await page.getByRole('button', { name: 'Create review', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Video interview' })).toBeVisible();
+    const videoUrl = page.url(); const videoEndpoint = origin + '/api' + new URL(videoUrl).pathname;
+    await page.getByLabel('Interview recording file', { exact: true }).setInputFiles(videoPath);
+    await page.getByRole('button', { name: 'Upload recording', exact: true }).click();
+    await expect(page.getByText('interview.mp4', { exact: true })).toBeVisible();
+    await page.goto('/reviews'); await page.goto(videoUrl);
+    await expect(page.getByText('Recording prepared', { exact: true })).toBeVisible({ timeout: 30000 });
+    const videoAudio = await page.request.get(videoEndpoint + '/audio', { headers: { range: 'bytes=0-43' } });
+    expect(videoAudio.status()).toBe(206); expect(new TextDecoder().decode((await videoAudio.body()).subarray(8, 12))).toBe('WAVE');
+    page.once('dialog', dialog => dialog.accept()); await page.getByRole('button', { name: 'Delete review', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Your reviews' })).toBeVisible();
+    expect((await page.request.get(videoEndpoint + '/audio')).status()).toBe(404);
+    await page.goto(savedUrl);
+  } finally { rmSync(videoFolder, { recursive: true, force: true }); }
   await page.screenshot({ path: 'test-results/review-workspace.png', fullPage: true });
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: 'Delete review', exact: true }).click();
