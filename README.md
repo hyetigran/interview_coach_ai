@@ -191,3 +191,5 @@ Run the evaluation CLI checks separately from the app tests:
 ```sh
 python3 -m unittest discover -s tests -p 'test_evaluation.py'
 ```
+
+The [five-candidate pilot protocol and report template](docs/pilot/README.md) define observation, fixed-cohort reporting, cost reconciliation, and critical-defect handling. They are preparation materials; the participant sessions and pilot results remain pending.
