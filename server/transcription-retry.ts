@@ -1,9 +1,10 @@
+import {providerConfigured} from './provider-configuration';
 import {accountSlotAvailable} from './account-slot';
 import {z} from 'zod';
 import {RecoveryError} from './recovery';
 import {transcriptionAttemptId,TRANSCRIPTION_RESERVATION} from '../lib/transcription-attempt';
 import type {PreparationResult} from './processing';
-type Environment=Pick<CloudflareEnv,'DB'|'MEDIA'|'OPENAI_API_KEY'>;
+type Environment=Pick<CloudflareEnv,'DB'|'MEDIA'|'OPENAI_API_KEY'|'OPENAI_JOBS_CONFIGURED'>;
 type Dispatch=(id:string,jobId:string,attempt:number)=>Promise<void>;
 export function createTranscriptionRetry(env:Environment,dispatch?:Dispatch) {
  const db=env.DB;
@@ -30,7 +31,7 @@ export function createTranscriptionRetry(env:Environment,dispatch?:Dispatch) {
    if(!await db.prepare("SELECT id FROM recovery_requests WHERE id=? AND owner_id=? AND review_id=? AND stage='transcription' AND target_id=? AND target_attempt=? AND state='applied'").bind(value.actionId,owner,review,value.transcriptId,value.attempt).first())throw new RecoveryError(409,'Saved transcription publication is pending, changed, or reached its three-window limit. No new paid request was made.');
    return {accepted:true};
   }
-  if(!env.OPENAI_API_KEY)throw new RecoveryError(409,'Configure transcription access before retrying.');
+  if(!providerConfigured(env))throw new RecoveryError(409,'Configure transcription access before retrying.');
   const row=await db.prepare("SELECT p.result FROM transcriptions t JOIN processing_jobs p ON p.id=t.job_id WHERE t.id=? AND t.owner_id=? AND t.review_id=? AND t.revision=? AND p.state='ready'").bind(value.transcriptId,owner,review,current.input_revision).first<{result:string}>();
   if(!row)throw new RecoveryError(409,'Prepared audio is unavailable.');
   const audio=JSON.parse(row.result) as PreparationResult;

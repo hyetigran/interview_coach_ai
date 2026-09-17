@@ -104,7 +104,7 @@ test('explicit grouping retry reserves the suffix once and reuses an unchanged c
  const review='group-retry-reuse',{actionId,speakers}=await setup(review,48),env={DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'};let calls=0;
  const grouping=createGroupingModule(env,async()=>{calls++;return calls===1?new Response('Quota',{status:429}):response({groups:[]});});
  await grouping.begin(actionId);await speakers.resume(actionId);await grouping.runChunk(actionId,0);await grouping.runChunk(actionId,1);await grouping.finish(actionId);expect(calls).toBe(2);
- const sent:string[]=[],retry=createGroupingRetry(env,async id=>{sent.push(id);}),plan=(await retry.plan(review,review))!;
+ const sent:string[]=[],retry=createGroupingRetry({...env,OPENAI_API_KEY:undefined,OPENAI_JOBS_CONFIGURED:'true'},async id=>{sent.push(id);}),plan=(await retry.plan(review,review))!;
  expect(plan.canRetry).toBe(true);expect(plan.sections).toEqual([1,2]);
  const input={actionId:crypto.randomUUID(),runId:actionId,version:plan.version};await Promise.all([retry.retry(review,review,input),retry.retry(review,review,input)]);
  expect(sent).toEqual([input.actionId]);

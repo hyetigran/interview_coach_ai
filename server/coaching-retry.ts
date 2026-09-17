@@ -1,3 +1,4 @@
+import {providerConfigured} from './provider-configuration';
 import {accountSlotAvailable} from './account-slot';
 import {z} from 'zod';
 import {RecoveryError} from './recovery';
@@ -5,7 +6,7 @@ import {createCoachingModule} from './coaching';
 import {coachingAttemptId} from '../lib/coaching-attempt';
 import {resolveCoaching,type CoachingSources} from '../lib/coaching';
 import {structuredOutput,STRUCTURED_RESERVATION} from './openai-structured';
-type Environment=Pick<CloudflareEnv,'DB'|'MEDIA'|'OPENAI_API_KEY'>;
+type Environment=Pick<CloudflareEnv,'DB'|'MEDIA'|'OPENAI_API_KEY'|'OPENAI_JOBS_CONFIGURED'>;
 type Job={publication_retries:number;id:string;run_id:string;attempt:number;draft_attempt:number;state:string;sources:string|null;run_state:string;grouping_id:string};
 type Dispatch=(actionId:string,groupingId:string)=>Promise<void>;
 const current=`SELECT j.*,c.state AS run_state,c.grouping_id FROM coaching_jobs j JOIN coaching_runs c ON c.id=j.run_id JOIN reviews r ON r.id=c.review_id JOIN grouping_runs g ON g.id=c.grouping_id
@@ -25,7 +26,7 @@ export function createCoachingRetry(env:Environment,dispatch?:Dispatch) {
   else if(reserved||job.state==='unknown'){canRetry=false;reason='A provider outcome or charge is unresolved. Its reservation remains held.';}
   else if(draftReceipt&&verifyReceipt){canRetry=false;reason='Publish the saved draft and verification before requesting another paid attempt.';}
   else if(job.attempt>=2){canRetry=false;reason='This thread reached its three-attempt limit.';}
-  else if(!env.OPENAI_API_KEY){canRetry=false;reason='Configure provider access before retrying coaching.';}
+  else if(!providerConfigured(env)){canRetry=false;reason='Configure provider access before retrying coaching.';}
   else if((used?.units??0)+maximumUnits>50000000){canRetry=false;reason='The remaining allowance cannot cover this retry.';}
   return {job,draft,maximumUnits,canRetry,reason};
  }

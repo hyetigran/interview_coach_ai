@@ -4,6 +4,7 @@ interface CloudflareEnv {
   LOCAL_API_ORIGIN?: string;
   LOCAL_MEDIA_ADAPTER?: string;
   OPENAI_API_KEY?: string;
+  OPENAI_JOBS_CONFIGURED?: string;
   CONTINUATION?: Workflow<{ confirmationId: string; coachingRunId?: string }>;
   DB: D1Database;
   MEDIA: R2Bucket;

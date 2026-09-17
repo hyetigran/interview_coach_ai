@@ -155,7 +155,7 @@ test('missing configuration releases an explicitly reserved attempt before any s
  const id='attempt-configuration',env=await setup(id);
  await db.prepare("UPDATE transcriptions SET paid_attempt=1 WHERE id=?").bind('transcript-'+id).run();
  await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units) VALUES(?,'openai-diarization-v1',6000000)").bind('transcript-'+id+'-attempt-1').run();
- const module=createTranscriptionModule({...env,OPENAI_API_KEY:undefined},adapter(async()=>{throw new Error('Must not call provider');}));await module.run(id);
+ const module=createTranscriptionModule({...env,OPENAI_API_KEY:undefined,OPENAI_JOBS_CONFIGURED:'true'},adapter(async()=>{throw new Error('Must not call provider');}));await module.run(id);
  expect((await module.status(id,id))?.state).toBe('configuration');
  expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind('transcript-'+id+'-attempt-1').first()).toEqual({state:'settled',settled_units:0});
 });
@@ -164,7 +164,7 @@ const retryInput=(id:string)=>({actionId:crypto.randomUUID(),transcriptId:'trans
 async function failed(id:string){const env=await setup(id);await db.prepare("UPDATE transcriptions SET state='failed' WHERE id=?").bind('transcript-'+id).run();return env;}
 test('concurrent explicit retries reserve once and duplicate actions replay the same dispatch',async()=>{
  const id='retry-concurrent',env=await failed(id),input=retryInput(id);const dispatched:string[]=[];
- const retry=createTranscriptionRetry(env,async key=>{dispatched.push(key);});
+ const retry=createTranscriptionRetry({...env,OPENAI_API_KEY:undefined,OPENAI_JOBS_CONFIGURED:'true'},async key=>{dispatched.push(key);});
  await Promise.all([retry.retry(id,id,input),retry.retry(id,id,input)]);
  expect(dispatched).toEqual(['recovery-'+input.actionId]);
  expect(await db.prepare('SELECT paid_attempt,state FROM transcriptions WHERE id=?').bind(input.transcriptId).first()).toEqual({paid_attempt:1,state:'queued'});

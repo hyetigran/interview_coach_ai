@@ -24,7 +24,7 @@ pnpm test
 pnpm exec wrangler deploy --config wrangler.media.jsonc --dry-run
 ```
 
-Apply migration 0031 to preview D1 before deploying any of these bundles. Deploy in dependency order: private media Worker, job Worker/Workflows, then the preview app. Configure the OpenAI secret on the job Worker without putting it in code or build arguments. Production has no hosted media binding and is outside this change.
+Apply migration 0031 to preview D1 before deploying any of these bundles. Deploy in dependency order: private media Worker, job Worker/Workflows, then the preview app. Configure the OpenAI secret on the job Worker without putting it in code or build arguments. Set the app environment variable `OPENAI_JOBS_CONFIGURED=true` only after that secret is configured; remove the flag if the job runtime is disabled. The flag enables retry controls without copying the key into the app, and provider execution still requires the real key. Production has no hosted media binding and is outside this change.
 
 ```sh
 pnpm exec wrangler d1 migrations apply DB --remote --env preview
