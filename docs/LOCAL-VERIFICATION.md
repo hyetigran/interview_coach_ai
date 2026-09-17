@@ -37,6 +37,14 @@ After the recovery fix, the final full development-server browser run passed all
 
 ## Tested configuration
 
+### Local database ownership
+
+An isolated diagnostic reproduced the intermittent local database errors: 27 of 100 simultaneous writes failed with `SQLITE_BUSY` or `SQLITE_BUSY_SNAPSHOT` when two Miniflare runtimes opened the same persisted database. The one-runtime control completed all 100 writes. Reproduce against disposable storage with `node scripts/d1-concurrency-probe.mjs 2` and `node scripts/d1-concurrency-probe.mjs 1`; the two-runtime command intentionally exits nonzero when it reproduces the lock. Failure counts depend on scheduling.
+
+Local API requests now pass through the job Worker, so normal API and Workflow operations use one database-owning runtime. The hop requires the local authentication secret and exact loopback configuration; it preserves cookies, request origins and bodies, and does not follow redirects. Preview/production omit the local binding and keep their existing request path. Local CLI seed/migration operations can still open another runtime, so run migrations before starting development and do not treat this change as proof that simultaneous CLI access is safe.
+
+The proxy requests identity encoding internally because Node fetch decodes compressed response bodies while retaining their encoding header. The outer Next server owns browser response encoding. Focused signup and keyboard navigation passed through this path; full regression results for this change must be recorded separately from the earlier run above.
+
 The installed environment uses Node 22.19.0, Next 16.3.4, OpenNext Cloudflare 1.20.6, Wrangler 4.130.0, Miniflare 5.20260908.0-alpha and FFmpeg 8.1.2. See the lockfile for transitive versions. Source configuration selects `gpt-4o-transcribe-diarize` for transcription and `gpt-4.1-mini-2025-04-14` for grouping/coaching; no provider invocation is established by the deterministic checks above.
 
 The app accepts standard-header PCM 16-bit WAV (one/two channels, 8–48 kHz) and supported MP4/MOV/WebM video, with a 256 MiB input ceiling and 60-minute duration ceiling. Both limits apply: some uncompressed 60-minute WAV files exceed the byte ceiling. Parts are 5 MiB, upload reservations last 24 hours, and part capabilities last five minutes. Admission defaults to three recordings per account, one active automatic job per account, and a shared $50 processing ledger. These are configured bounds, not measured cost for fifteen hour-long recordings; hosting/storage is separate.
