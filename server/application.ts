@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { createAuth } from './auth';
 import { invitations } from './schema';
 import { createReviewModule } from './reviews';
+import { createRuntimeProcessing } from './processing';
 import { createMediaModule, MediaError } from './media';
 import { PART_BYTES } from '../lib/media/contracts';
 
@@ -43,9 +44,13 @@ export function createApplication(env: CloudflareEnv) {
           }
           return json({ error: 'Method not allowed.' }, 405);
         }
-        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
+        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
         if (mediaPath) {
           const [, reviewId, action, uploadId, operation, part, sign] = mediaPath;
+          if (action === 'processing' && request.method === 'GET') {
+            if (!await reviews.get(session.user.id, reviewId)) return json({ error: 'Review not found.' }, 404);
+            return json(await createRuntimeProcessing(env).status(session.user.id, reviewId));
+          }
           if (action === 'deletion' && request.method === 'GET') return json(await media.deletionStatus(session.user.id, reviewId));
           if (action === 'audio' && ['GET', 'HEAD'].includes(request.method)) return await media.play(session.user.id, reviewId, request.headers.get('range'), request.method === 'HEAD');
           if (action === 'media' && request.method === 'GET') return json(await media.status(session.user.id, reviewId));

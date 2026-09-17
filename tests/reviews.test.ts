@@ -1,15 +1,14 @@
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { createReviewModule } from '../server/reviews';
 
 const runtime = new Miniflare(convertV4MiniflareOptions({ modules: true, script: 'export default { fetch() { return new Response("test"); } }', d1Databases: ['DB'] }));
 let reviews: ReturnType<typeof createReviewModule>;
 beforeAll(async () => {
   const binding = await runtime.getD1Database('DB');
-  const sql = readFileSync(new URL('../drizzle/0000_reviews.sql', import.meta.url), 'utf8');
-  for (const statement of sql.split('--> statement-breakpoint')) {
-    if (statement.trim()) await binding.prepare(statement.trim()).run();
+  for (const file of readdirSync(new URL('../drizzle/', import.meta.url)).filter(f => f.endsWith('.sql')).sort()) {
+    for (const statement of readFileSync(new URL('../drizzle/' + file, import.meta.url), 'utf8').split('--> statement-breakpoint')) if (statement.trim()) await binding.prepare(statement.trim()).run();
   }
   reviews = createReviewModule(binding as unknown as D1Database);
 });

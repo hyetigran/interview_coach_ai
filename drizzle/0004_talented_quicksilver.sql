@@ -1,0 +1,1 @@
+ALTER TABLE `processing_jobs` ADD `cancellation_attempted_at` integer;
