@@ -1,4 +1,5 @@
 'use client';
+import {FutureAnswerEditor} from './saved-preparation';
 import {useQuery} from '@tanstack/react-query';
 import {useRef} from 'react';
 import {api} from '@/lib/api';
@@ -23,6 +24,7 @@ export function CoachingCard({reviewId,threadId}:{reviewId:string;threadId:strin
    <ul className="space-y-2">{result.segments.map((segment,i)=><li key={i}>{segment.citations.map((cite,j)=><blockquote key={j}><p>{cite.quote}</p>{'contextId' in cite?<p className="text-sm">New material from {cite.label.toLowerCase()} — context version {cite.contextId.split(':').at(-1)}. This was not recorded interview speech.</p>:<><p className="text-sm">From the recorded interview</p><Button variant="ghost" onClick={()=>{if(audio.current){audio.current.currentTime=cite.startMs/1000;void audio.current.play().catch(()=>{});}}}>Listen to supporting passage at {Math.floor(cite.startMs/60000)}:{String(Math.floor(cite.startMs/1000)%60).padStart(2,'0')}</Button></>}</blockquote>)}</li>)}</ul></>}
   {result.missingFacts.length>0&&<div><h5 className="font-medium">Questions to fill the gaps</h5><ul>{result.missingFacts.map((q,i)=><li key={i}>{q}</li>)}</ul></div>}
   {result.limitations.map((text,i)=><p key={i}>{text}</p>)}
+  <FutureAnswerEditor reviewId={reviewId} jobId={job.id} proposal={result.segments.map(s=>s.text).join(' ')} />
   <p className="text-sm text-muted-foreground">The original answer is shown above. This is a proposed future answer, not a transcript correction. Matching citations and automated support checks do not establish substantive correctness; coaching quality has not yet been independently evaluated.</p>
  </section>;
 }

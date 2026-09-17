@@ -165,3 +165,9 @@ The first automatic analysis uses the context revision captured at speaker
 confirmation; editing while grouping is underway requires explicit reanalysis.
 Excluding context changes future inputs. Earlier context snapshots remain for
 historical citations and saved work; whole-review deletion removes them.
+
+### Saved preparation
+
+Candidates can edit a proposed future answer and save up to three priorities per review. Each answer revision retains its original thread, coaching result and evidence snapshot; older preparation stays editable when analysis changes. Saved evidence is available from the preparation panel. These writes never trigger paid processing or become transcript/background facts.
+
+Answer text is limited to 10,000 characters; each priority to 500 characters. Conditional versions reject concurrent overwrites and the editor preserves its draft until the candidate explicitly loads the latest saved version. Whole-review deletion erases all saved revisions and priorities and clears the review's private query caches.

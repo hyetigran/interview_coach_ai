@@ -39,6 +39,8 @@ export function createMediaModule(env: Environment) {
   }
   async function cleanup() {
     await db.prepare("DELETE FROM review_context_versions WHERE NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=review_context_versions.review_id AND lifecycle='active')").run();
+    await db.prepare("DELETE FROM saved_answers WHERE NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=saved_answers.review_id AND lifecycle='active')").run();
+    await db.prepare("DELETE FROM review_priorities WHERE NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=review_priorities.review_id AND lifecycle='active')").run();
     await db.prepare("UPDATE uploads SET state='cleanup' WHERE admitted_at IS NULL AND state NOT IN ('cleanup','rejected') AND expires_at<=?").bind(Date.now()).run();
     const rows = (await db.prepare("SELECT * FROM uploads WHERE state='cleanup' ORDER BY COALESCE(cleanup_attempted_at,0), created_at LIMIT 25").all<Row>()).results;
     for (const row of rows) { await db.prepare('UPDATE uploads SET cleanup_attempted_at=? WHERE id=?').bind(Date.now(), row.id).run(); try { await cleanupRow(row); } catch { /* Persisted tombstone is retried by the next sweep. */ } }
@@ -127,6 +129,8 @@ export function createMediaModule(env: Environment) {
     await db.batch([
       db.prepare("UPDATE reviews SET lifecycle='deleting',title='',role='' WHERE id=? AND owner_id=?").bind(review, owner),
       db.prepare("DELETE FROM review_context_versions WHERE review_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review,review,owner),
+      db.prepare("DELETE FROM saved_answers WHERE review_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review,review,owner),
+      db.prepare("DELETE FROM review_priorities WHERE review_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review,review,owner),
       db.prepare("UPDATE uploads SET state='cleanup',name='',cleaned_at=NULL WHERE review_id=? AND owner_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review, owner, review, owner),
       db.prepare("UPDATE processing_jobs SET dispatch_state=CASE WHEN state='queued' OR (state='cancelled' AND dispatch_state='cancelled') THEN 'cancelled' ELSE 'cancel_pending' END,state='cancelled',result=NULL,error=NULL,finished_at=? WHERE review_id=? AND owner_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(Date.now(), review, owner, review, owner),
     ]);

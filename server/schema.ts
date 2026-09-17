@@ -93,3 +93,5 @@ export const coachingJobs = sqliteTable('coaching_jobs',{
 },table=>[uniqueIndex('coaching_thread').on(table.runId,table.threadId)]);
 
 export const reviewContextVersions=sqliteTable('review_context_versions',{id:text().primaryKey(),reviewId:text('review_id').notNull(),revision:integer().notNull(),body:text().notNull(),createdAt:integer('created_at').notNull()},table=>[uniqueIndex('context_review_revision').on(table.reviewId,table.revision)]);
+export const reviewPriorities=sqliteTable('review_priorities',{reviewId:text('review_id').primaryKey(),version:integer().notNull(),body:text().notNull(),updatedAt:integer('updated_at').notNull()});
+export const savedAnswers=sqliteTable('saved_answers',{id:text().primaryKey(),reviewId:text('review_id').notNull(),coachingJobId:text('coaching_job_id').notNull(),threadId:text('thread_id').notNull(),version:integer().notNull(),body:text().notNull(),sources:text().notNull(),coachingResult:text('coaching_result').notNull(),createdAt:integer('created_at').notNull()},table=>[uniqueIndex('saved_answer_version').on(table.reviewId,table.coachingJobId,table.version)]);

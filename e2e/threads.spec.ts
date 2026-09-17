@@ -33,8 +33,10 @@ test('question threads open by keyboard and retain missing answers and uncertain
   await expect(page.getByText('This association is uncertain. Compare it with the transcript and audio.')).toBeVisible();
   const play=page.getByRole('button',{name:'Play passage at 0:04',exact:true});await play.focus();await page.keyboard.press('Enter');
   await expect(page.getByText(/Some sections could not be grouped/)).toBeVisible();
+  await page.getByRole('button',{name:'Edit future answer',exact:true}).click();await page.getByRole('textbox',{name:'Your future answer',exact:true}).fill('My draft stays with the original coaching result.');
   await page.route(`**/api/reviews/${review.id}/coaching`,route=>route.fulfill({json:{state:'outdated',jobs:[]}}));
-  await page.reload();await root.focus();await page.keyboard.press('Enter');
+  const other=await context.newPage();await other.goto('about:blank');await other.bringToFront();await page.bringToFront();await page.evaluate(()=>window.dispatchEvent(new Event('visibilitychange')));
+  await expect(page.getByRole('textbox',{name:'Your future answer',exact:true})).toHaveValue('My draft stays with the original coaching result.');await other.close();
   await expect(page.getByText(/The source changed. This advice is outdated/)).toBeVisible();
   let queuedPolls=0;await page.route(`**/api/reviews/${review.id}/coaching`,route=>{queuedPolls++;return route.fulfill({json:queuedPolls<3?{state:'queued',jobs:[]}:responses.coaching});});
   await page.reload();await root.focus();await page.keyboard.press('Enter');

@@ -1,3 +1,4 @@
+import {createPreparationModule,PreparationError} from './preparation';
 import {createContextModule,ContextError} from './review-context';
 import {createReanalysisModule} from './reanalysis';
 import { createCoachingModule } from './coaching';
@@ -50,9 +51,16 @@ export function createApplication(env: CloudflareEnv) {
           }
           return json({ error: 'Method not allowed.' }, 405);
         }
-        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|transcript|speakers|threads|coaching|context|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
+        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|transcript|speakers|threads|coaching|context|preparation|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
         if (mediaPath) {
           const [, reviewId, action, uploadId, operation, part, sign] = mediaPath;
+          if(action==='preparation') {
+            const preparation=createPreparationModule(env.DB);
+            if(request.method==='GET'){const answer=new URL(request.url).searchParams.get('answer');return json(answer?await preparation.evidence(session.user.id,reviewId,answer):await preparation.get(session.user.id,reviewId));}
+            const body=JSON.parse(new TextDecoder().decode(await boundedBytes(request,45000)));
+            if(request.method==='PUT')return json(await preparation.priorities(session.user.id,reviewId,body));
+            if(request.method==='POST')return json(await preparation.save(session.user.id,reviewId,body));
+          }
           if (action === 'context') {
             const context=createContextModule(env.DB);
             if(request.method==='GET')return json(await context.get(session.user.id,reviewId));
@@ -104,6 +112,7 @@ export function createApplication(env: CloudflareEnv) {
         }
         return json({ error: 'Not found.' }, 404);
       } catch (error) {
+        if (error instanceof PreparationError) return json({error:error.message},error.status);
         if (error instanceof ContextError) return json({error:error.message},error.status);
         if (error instanceof SpeakerError) return json({ error: error.message }, error.status);
         if (error instanceof MediaError) return json({ error: error.message }, error.status);
