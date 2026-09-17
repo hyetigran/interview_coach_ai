@@ -11,6 +11,7 @@ function invite(email: string) {
 }
 
 test('invited candidate creates, reopens after sign-in, and deletes a review', async ({ page, playwright }) => {
+  test.setTimeout(90000); // Multiple uploads and processing waits share this complete candidate journey.
   const email = `browser-${randomUUID()}@example.com`;
   const token = invite(email);
   const password = randomUUID() + randomUUID();
