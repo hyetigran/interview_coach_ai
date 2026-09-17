@@ -6,6 +6,7 @@ import { MAX_AUDIO_BYTES, PART_BYTES, type MediaState, type UploadState } from '
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { PreparationStatus } from './preparation-status';
 
 export function AudioUpload({ reviewId, ownerId }: { reviewId: string; ownerId: string }) {
   const client = useQueryClient();
@@ -52,7 +53,7 @@ export function AudioUpload({ reviewId, ownerId }: { reviewId: string; ownerId: 
     {state.data && <p className="mt-2 text-sm">{state.data.admitted} of {state.data.allowance} recording admissions used; {state.data.reserved} reserved. Deleting a recording does not restore an admission.</p>}
     {state.isPending && <p role="status" className="mt-4">Loading recording…</p>}
     {state.error && <p role="alert" className="mt-4">{state.error.message}</p>}
-    {current?.state === 'admitted' ? <div className="mt-4"><p className="mb-3">{current.name}</p><audio controls preload="metadata" src={path + '/audio'} aria-label="Private interview recording" /><p className="mt-3 text-sm text-muted-foreground">Recording saved. Transcript processing is coming in the next update.</p></div> : <>
+    {current?.state === 'admitted' ? <div className="mt-4"><p className="mb-3">{current.name}</p><audio controls preload="metadata" src={path + '/audio'} aria-label="Private interview recording" /><PreparationStatus reviewId={reviewId} /></div> : <>
       {current?.state === 'cleanup' && <p role="status" className="mt-4">The previous upload expired, was invalid, or was cancelled. Select a WAV file to start again; its unused reservation has been released.</p>}
       {current?.state === 'uploading' && <p className="mt-4">Saved {Math.round(savedBytes / current.size * 100)}% of {current.name}. Reselect the original file to resume. Upload expires {new Date(current.expiresAt).toLocaleString()}.</p>}
       {current?.state === 'completing' && <p role="status" className="mt-4">Checking your recording. If this was interrupted, reselect the file and retry after one minute.</p>}

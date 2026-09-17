@@ -80,6 +80,9 @@ test('invited candidate creates, reopens after sign-in, and deletes a review', a
     await page.getByLabel('WAV recording', { exact: true }).setInputFiles(audioPath);
     await page.getByRole('button', { name: 'Resume upload', exact: true }).click();
     await expect(page.getByLabel('Private interview recording')).toBeVisible();
+    await page.goto('/reviews');
+    await page.goto(savedUrl);
+    await expect(page.getByText('Recording prepared', { exact: true })).toBeVisible({ timeout: 30000 });
     const audio = await page.request.get(endpoint + '/audio', { headers: { range: 'bytes=0-43' } });
     expect(audio.status()).toBe(206);
     expect(audio.headers()['content-range']).toBe(`bytes 0-43/${size}`);

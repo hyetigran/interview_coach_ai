@@ -46,7 +46,15 @@
         "crons": [
           "*/15 * * * *"
         ]
-      }
+      },
+      "workflows": [
+        {
+          "name": "interview-coach-preview-preparation",
+          "binding": "PROCESSING",
+          "class_name": "PreparationWorkflow",
+          "script_name": "interview-coach-jobs-preview"
+        }
+      ]
     },
     "production": {
       "name": "interview-coach",
@@ -72,7 +80,15 @@
         "crons": [
           "*/15 * * * *"
         ]
-      }
+      },
+      "workflows": [
+        {
+          "name": "interview-coach-production-preparation",
+          "binding": "PROCESSING",
+          "class_name": "PreparationWorkflow",
+          "script_name": "interview-coach-jobs-production"
+        }
+      ]
     }
   },
   "r2_buckets": [
@@ -85,5 +101,13 @@
     "crons": [
       "*/15 * * * *"
     ]
-  }
+  },
+  "workflows": [
+    {
+      "name": "interview-coach-local-preparation",
+      "binding": "PROCESSING",
+      "class_name": "PreparationWorkflow",
+      "script_name": "interview-coach-jobs-local"
+    }
+  ]
 }

@@ -1,19 +1,15 @@
+import { initialJobStatement, createRuntimeProcessing } from './processing';
+import { validateWave } from './audio-format';
 import { z } from 'zod';
 import { MAX_AUDIO_BYTES, PART_BYTES, UPLOAD_LEASE_MS, type MediaState, type UploadState } from '../lib/media/contracts';
 export class MediaError extends Error { constructor(public status: number, message: string) { super(message); } }
 type Row = { id: string; owner_id: string; review_id: string; name: string; size: number; state: string; object_key: string; multipart_id: string | null; expires_at: number; admitted_at: number | null; lock_until: number };
 type Part = { number: number; etag: string; sha256: string };
-type Environment = { DB: D1Database; MEDIA: R2Bucket; AUTH_SECRET: string; RECORDING_ALLOWANCE?: string };
+type Environment = { DB: D1Database; MEDIA: R2Bucket; AUTH_SECRET: string; RECORDING_ALLOWANCE?: string; PROCESSING?: Workflow<{ jobId: string }> };
 const inputSchema = z.object({ name: z.string().min(1).max(200).regex(/\.wav$/i), size: z.number().int().min(46).max(MAX_AUDIO_BYTES), actionId: z.uuid() }).strict();
 const activeReview = "EXISTS (SELECT 1 FROM reviews WHERE reviews.id=uploads.review_id AND reviews.owner_id=uploads.owner_id AND lifecycle='active')";
 const privateHeaders = { 'Cache-Control': 'private, no-store', 'Accept-Ranges': 'bytes', 'Content-Type': 'audio/wav', 'X-Content-Type-Options': 'nosniff' };
 async function digest(bytes: Uint8Array) { return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', Uint8Array.from(bytes))), b => b.toString(16).padStart(2, '0')).join(''); }
-function validateWave(bytes: ArrayBuffer, size: number) {
-  const v = new DataView(bytes); const text = (offset: number, length: number) => new TextDecoder().decode(bytes.slice(offset, offset + length));
-  if (bytes.byteLength < 44 || text(0, 4) !== 'RIFF' || text(8, 4) !== 'WAVE' || text(12, 4) !== 'fmt ' || text(36, 4) !== 'data' || v.getUint32(16, true) !== 16 || v.getUint16(20, true) !== 1 || v.getUint16(34, true) !== 16) throw new MediaError(422, 'Use a PCM 16-bit WAV with a standard 44-byte header.');
-  const channels = v.getUint16(22, true), rate = v.getUint32(24, true), dataBytes = v.getUint32(40, true);
-  if (![1, 2].includes(channels) || rate < 8000 || rate > 48000 || v.getUint16(32, true) !== channels * 2 || v.getUint32(28, true) !== rate * channels * 2 || v.getUint32(4, true) !== size - 8 || dataBytes !== size - 44 || dataBytes % (channels * 2) || dataBytes / (rate * channels * 2) > 3600) throw new MediaError(422, 'The WAV size, duration, or audio metadata is invalid. Maximum duration is 60 minutes.');
-}
 export function createMediaModule(env: Environment) {
   const { DB: db, MEDIA: bucket } = env;
   const allowance = z.coerce.number().int().min(1).max(100).parse(env.RECORDING_ALLOWANCE ?? 3);
@@ -102,8 +98,9 @@ export function createMediaModule(env: Environment) {
       if (!object) object = await bucket.resumeMultipartUpload(row.object_key, row.multipart_id).complete(uploaded.map(p => ({ partNumber: p.number, etag: p.etag })));
       if (object.size !== row.size || object.size > MAX_AUDIO_BYTES || object.httpMetadata?.contentType !== 'audio/wav') throw new MediaError(422, 'Stored recording metadata does not match the upload.');
       const header = await bucket.get(row.object_key, { range: { offset: 0, length: 44 } });
-      if (!header) throw new Error('Recording unavailable'); validateWave(await header.arrayBuffer(), object.size);
-      const published = await db.prepare(`UPDATE uploads SET state='admitted',admitted_at=?,lock_until=0 WHERE id=? AND claim_token=? AND state='completing' AND expires_at>? AND ${activeReview}`).bind(Date.now(), id, claimToken, Date.now()).run();
+      if (!header) throw new Error('Recording unavailable'); try { validateWave(await header.arrayBuffer(), object.size); } catch (error) { throw new MediaError(422, error instanceof Error ? error.message : 'Invalid audio.'); }
+      const publication = db.prepare(`UPDATE uploads SET state='admitted',admitted_at=?,lock_until=0 WHERE id=? AND claim_token=? AND state='completing' AND expires_at>? AND ${activeReview}`).bind(Date.now(), id, claimToken, Date.now());
+      const [published] = await db.batch([publication, initialJobStatement(db, id)]);
       if (!published.meta.changes) {
         const latest = await get(id);
         if (latest && (latest.state === 'admitted' || (latest.state === 'completing' && latest.expires_at > Date.now()))) {
@@ -111,6 +108,7 @@ export function createMediaModule(env: Environment) {
         }
         await bucket.delete(row.object_key); throw new MediaError(410, 'Review or upload is no longer active.');
       }
+      await createRuntimeProcessing(env).reconcile();
       row = (await get(id))!; return view(row);
     } catch (error) {
       if (error instanceof MediaError) await db.prepare("UPDATE uploads SET state='cleanup' WHERE id=? AND claim_token=? AND admitted_at IS NULL").bind(id, claimToken).run();
@@ -122,16 +120,19 @@ export function createMediaModule(env: Environment) {
     await db.batch([
       db.prepare("UPDATE reviews SET lifecycle='deleting',title='',role='' WHERE id=? AND owner_id=?").bind(review, owner),
       db.prepare("UPDATE uploads SET state='cleanup',name='',cleaned_at=NULL WHERE review_id=? AND owner_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review, owner, review, owner),
+      db.prepare("UPDATE processing_jobs SET dispatch_state=CASE WHEN state='queued' OR (state='cancelled' AND dispatch_state='cancelled') THEN 'cancelled' ELSE 'cancel_pending' END,state='cancelled',result=NULL,error=NULL,finished_at=? WHERE review_id=? AND owner_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(Date.now(), review, owner, review, owner),
     ]);
     const rows = (await db.prepare("SELECT * FROM uploads WHERE review_id=? AND owner_id=? AND state='cleanup'").bind(review, owner).all<Row>()).results;
     for (const row of rows) { try { await cleanupRow(row); } catch { /* Report pending and retain for retry. */ } }
+    await createRuntimeProcessing(env).reconcile();
     return deletionStatus(owner, review);
   }
   async function deletionStatus(owner: string, review: string) {
     const deleted = await db.prepare("SELECT id FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting'").bind(review, owner).first();
     if (!deleted) return { cleanupPending: false };
     const pending = await db.prepare("SELECT id FROM uploads WHERE review_id=? AND owner_id=? AND state='cleanup' AND cleaned_at IS NULL LIMIT 1").bind(review, owner).first();
-    return { cleanupPending: Boolean(pending) };
+    const pendingJob = await db.prepare("SELECT id FROM processing_jobs WHERE review_id=? AND owner_id=? AND dispatch_state='cancel_pending' LIMIT 1").bind(review, owner).first();
+    return { cleanupPending: Boolean(pending || pendingJob) };
   }
   async function play(owner: string, review: string, range: string | null, head = false) {
     await authorize(owner, review);

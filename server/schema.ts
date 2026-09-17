@@ -35,6 +35,7 @@ export const invitations = sqliteTable('invitations', {
 export const reviews = sqliteTable('reviews', {
   id: text().primaryKey(), ownerId: text('owner_id').notNull(), title: text().notNull(), role: text().notNull(),
   origin: text({ enum: ['hiring', 'mock'] }).notNull(),
+  inputRevision: integer('input_revision').notNull().default(1),
   lifecycle: text({ enum: ['active', 'deleting'] }).notNull().default('active'),
   createdAt: integer('created_at').notNull(), updatedAt: integer('updated_at').notNull(),
 }, t => [index('reviews_owner').on(t.ownerId, t.lifecycle, t.createdAt)]);
@@ -50,3 +51,12 @@ export const uploadParts = sqliteTable('upload_parts', {
   id: text().primaryKey(), uploadId: text('upload_id').notNull(), number: integer().notNull(),
   etag: text().notNull(), sha256: text().notNull(),
 }, t => [index('parts_upload').on(t.uploadId)]);
+
+export const processingJobs = sqliteTable('processing_jobs', {
+  id: text().primaryKey(), reviewId: text('review_id').notNull(), ownerId: text('owner_id').notNull(), uploadId: text('upload_id').notNull().unique(),
+  revision: integer().notNull().default(1), state: text().notNull().default('queued'), dispatchState: text('dispatch_state').notNull().default('pending'),
+  createdAt: integer('created_at').notNull(), deadline: integer().notNull().default(0), finishedAt: integer('finished_at'), error: text(), result: text(), cancellationAttemptedAt: integer('cancellation_attempted_at'),
+});
+export const processingBudget = sqliteTable('processing_budget', {
+  id: text().primaryKey(), operation: text().notNull(), reservedUnits: integer('reserved_units').notNull(), settledUnits: integer('settled_units'), state: text().notNull().default('reserved'),
+});

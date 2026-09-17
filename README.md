@@ -2,7 +2,7 @@
 
 An invited pilot for software-engineering candidates reviewing recordings of hiring and mock interviews. Product requirements, architecture, glossary, and decisions are maintained in the repository documentation.
 
-The first implementation slice provides invitation-gated accounts and private persisted review metadata. Recording ingestion and coaching remain subsequent tickets. The fictional interaction prototype is available at `/example`; it is separate from private reviews.
+The local app provides invitation-gated accounts, private persisted reviews, resumable WAV uploads, ranged audio playback, deletion, and automatic durable recording preparation. Video ingestion, transcription, and coaching remain subsequent tickets. The fictional interaction prototype is available at `/example`; it is separate from private reviews.
 
 ## Local development
 
@@ -80,3 +80,11 @@ Run `pnpm setup:local`, `pnpm db:migrate:local`, and `pnpm dev`. The MEDIA bindi
 The Worker scheduled handler retries cleanup every 15 minutes. To exercise it locally after `pnpm build`, run `pnpm exec wrangler dev --test-scheduled` and request `/cdn-cgi/local/scheduled` on that local server. Local `next dev` also sweeps expired uploads when loading recording status. The configured remote R2 buckets are not yet provisioned; local validation is the current delivery priority.
 
 Run `E2E_DEV=1 pnpm test:e2e` to exercise the same upload/resume/playback/deletion flow against `next dev` itself.
+
+## Automatic local preparation
+
+`pnpm dev` now starts both Next.js on port 3000 and a local job Worker on port 8789. Keep this command running; closing the browser does not stop preparation. The launcher periodically triggers the local scheduled reconciler because Wrangler does not automatically fire cron events during development. Stopping the command stops both services, and D1/R2/Workflow state remains under `.wrangler/state` for the next session.
+
+Completed uploads atomically persist a preparation job and dispatch intent. Each job uses a stable Workflow ID, one running slot per candidate, bounded retries, a five-minute deadline, and revision/lifecycle checks before publication. The local Workflow verifies actual WAV bytes and stores a SHA-256/metadata checkpoint. Polling reads progress without creating jobs. The probe is local and free; it calls no transcription or AI service. The shared processing ledger is ready for later paid stages and uses integer microdollars, with a $50 cap and unknown charges retained as reservations.
+
+Remote rollout will require deploying `wrangler.jobs.jsonc` as well as the app, and separately provisioning its private bindings. This is deferred while local functionality is completed.
