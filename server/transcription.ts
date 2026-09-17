@@ -1,3 +1,4 @@
+import {mediaServiceRequest} from './media-service';
 import {accountSlotAvailable} from './account-slot';
 import {reconcileProviderBilling} from './historical-billing';
 import {transcriptionAttemptId,TRANSCRIPTION_RESERVATION} from '../lib/transcription-attempt';
@@ -6,7 +7,7 @@ import { z } from 'zod';
 import { createBudgetLedger } from './budget';
 import type { PreparationResult } from './processing';
 import { parseTranscript, type Transcript } from '../lib/transcript';
-type Environment = Pick<CloudflareEnv, 'DB' | 'MEDIA' | 'AUTH_SECRET' | 'OPENAI_API_KEY' | 'LOCAL_MEDIA_ADAPTER'>;
+type Environment = Pick<CloudflareEnv, 'DB' | 'MEDIA' | 'AUTH_SECRET' | 'OPENAI_API_KEY' | 'LOCAL_MEDIA_ADAPTER' | 'MEDIA_PROCESSOR'>;
 type Row = { publication_retries:number; id: string; review_id: string; owner_id: string; job_id: string; revision: number; state: string; result_key: string | null; error: string | null; parent_id:string|null; publication_attempts:number; publication_deadline:number;paid_attempt:number };
 const active = "EXISTS(SELECT 1 FROM reviews WHERE reviews.id=transcriptions.review_id AND reviews.owner_id=transcriptions.owner_id AND reviews.lifecycle='active' AND reviews.input_revision=transcriptions.revision)";
 export function transcriptionIntent(db: D1Database, jobId: string) {
@@ -40,8 +41,8 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
       if (!preparation) throw new Error('Prepared audio is unavailable.');
       const audio = JSON.parse(preparation.result) as PreparationResult;
       const object = await env.MEDIA.get(audio.audioKey ?? audio.sourceKey);
-      if (!object || env.LOCAL_MEDIA_ADAPTER !== 'http://127.0.0.1:8790') throw new Error('The local media service is required for transcription.');
-      const encoded = await request(`${env.LOCAL_MEDIA_ADAPTER}/compression/${call}`, { method: 'POST', headers: { authorization: `Bearer ${env.AUTH_SECRET}` }, body: object.body, signal: AbortSignal.timeout(80000) });
+      if (!object) throw new Error('Prepared audio is unavailable.');
+      const encoded = await mediaServiceRequest(env, `/compression/${call}`, { method: 'POST', body: object.body, signal: AbortSignal.timeout(80000) }, request);
       if (!encoded.ok || Number(encoded.headers.get('content-length')) > 15000000) throw new Error('Unable to prepare audio for transcription.');
       const bytes = await encoded.arrayBuffer(); if (bytes.byteLength > 15000000 || !bytes.byteLength) throw new Error('Compressed audio is invalid.');
       // Conservative local policy reservation, not a provider-enforced price ceiling.

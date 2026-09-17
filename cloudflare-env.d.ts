@@ -1,5 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 interface CloudflareEnv {
+  MEDIA_PROCESSOR?: DurableObjectNamespace;
   LOCAL_API_ORIGIN?: string;
   LOCAL_MEDIA_ADAPTER?: string;
   OPENAI_API_KEY?: string;

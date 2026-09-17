@@ -1,0 +1,43 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "interview-coach-media-preview",
+  "main": "media/worker.ts",
+  "compatibility_date": "2026-09-08",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MEDIA_PROCESSOR",
+        "class_name": "MediaProcessor"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "MediaProcessor"
+      ]
+    }
+  ],
+  "containers": [
+    {
+      "class_name": "MediaProcessor",
+      "image": "./media/Dockerfile",
+      "image_build_context": ".",
+      "max_instances": 3,
+      "instance_type": "basic"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "interview-coach-preview",
+      "database_id": "59c3b2df-6882-4838-8bf6-73d674a26740"
+    }
+  ]
+}

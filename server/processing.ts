@@ -1,3 +1,6 @@
+import {mediaOutputForStorage} from './media-output';
+import {transcriptionAttemptId} from '../lib/transcription-attempt';
+import {mediaServiceRequest, type MediaServiceEnvironment} from './media-service';
 import {reconcileProviderBilling} from './historical-billing';
 import {accountSlotAvailable} from './account-slot';
 import {preparationAttemptId} from '../lib/preparation-attempt';
@@ -5,7 +8,7 @@ import { transcriptionIntent } from './transcription';
 import { createHash } from 'node:crypto';
 import { validateWave } from './audio-format';
 import { MAX_AUDIO_BYTES } from '../lib/media/contracts';
-type Environment = { DB: D1Database; MEDIA: R2Bucket; LOCAL_MEDIA_ADAPTER?: string; AUTH_SECRET?: string };
+type Environment = MediaServiceEnvironment & { DB: D1Database; MEDIA: R2Bucket };
 type Job = { attempt:number; failure_kind:string; dispatch_attempts:number; dispatch_started_at:number; id: string; review_id: string; owner_id: string; upload_id: string; state: string; dispatch_state: string; revision: number; deadline: number; result: string | null; error: string | null };
 class InvalidRecording extends Error {}
 const active = "EXISTS(SELECT 1 FROM reviews WHERE reviews.id=processing_jobs.review_id AND reviews.owner_id=processing_jobs.owner_id AND reviews.lifecycle='active' AND reviews.input_revision=processing_jobs.revision)";
@@ -71,14 +74,13 @@ export function createProcessingModule(env: Environment, dispatch?: (id: string,
     if (sourceBytes !== upload.size) throw new InvalidRecording('Recording is incomplete.');
     const sourceSha256 = sourceHash.digest('hex');
     if (!/\.wav$/i.test(upload.name)) {
-      if (env.LOCAL_MEDIA_ADAPTER !== 'http://127.0.0.1:8790' || !env.AUTH_SECRET) throw new Error('Video preparation requires the local media service. Run pnpm dev.');
       const source = await bucket.get(upload.object_key);
       if (!source || source.size !== upload.size || source.size > MAX_AUDIO_BYTES) throw new InvalidRecording('Recording is incomplete or too large.');
-      const response = await fetch(`${env.LOCAL_MEDIA_ADAPTER}/operations/${preparationAttemptId(id,attempt)}`, { method: 'POST', headers: { authorization: `Bearer ${env.AUTH_SECRET}` }, body: source.body, signal: AbortSignal.timeout(80000) });
+      const response = await mediaServiceRequest(env, `/operations/${preparationAttemptId(id,attempt)}`, { method: 'POST', body: source.body, signal: AbortSignal.timeout(80000) });
       if (!response.ok || !response.body) {const message=(await response.text()).slice(0,200)||'Video preparation failed.';throw response.status===422?new InvalidRecording(message):new Error(message);}
       await live(id,attempt);
       audioKey = 'audio/' + job.upload_id + '/' + crypto.randomUUID();
-      await bucket.put(audioKey, response.body, { httpMetadata: { contentType: 'audio/wav' } });
+      await bucket.put(audioKey, env.MEDIA_PROCESSOR ? mediaOutputForStorage(response) : response.body, { httpMetadata: { contentType: 'audio/wav' } });
       try { await live(id,attempt); } catch (error) { await bucket.delete(audioKey); throw error; }
     }
     const object = await bucket.get(audioKey);
@@ -120,7 +122,14 @@ export function createRuntimeProcessing(env: Environment & { PROCESSING?: Workfl
   return createProcessingModule(env,
     env.PROCESSING ? async (id,attempt) => { await env.PROCESSING!.createBatch([{ id:preparationAttemptId(id,attempt), params: { jobId: id,preparationAttempt:attempt } }]); } : undefined,
     env.PROCESSING ? async (id,attempt) => {
-      if (env.LOCAL_MEDIA_ADAPTER === 'http://127.0.0.1:8790' && env.AUTH_SECRET) { const response = await fetch(`${env.LOCAL_MEDIA_ADAPTER}/operations/${preparationAttemptId(id,attempt)}`, { method: 'DELETE', headers: { authorization: `Bearer ${env.AUTH_SECRET}` }, signal: AbortSignal.timeout(5000) }); if (!response.ok) throw new Error('Media cancellation pending.'); }
+      if (env.MEDIA_PROCESSOR || (env.LOCAL_MEDIA_ADAPTER === 'http://127.0.0.1:8790' && env.AUTH_SECRET)) { const response = await mediaServiceRequest(env, `/operations/${preparationAttemptId(id,attempt)}`, { method: 'DELETE', signal: AbortSignal.timeout(5000) }); if (!response.ok) throw new Error('Media cancellation pending.'); }
+      if (env.MEDIA_PROCESSOR) {
+        const transcript = await env.DB.prepare('SELECT id,paid_attempt FROM transcriptions WHERE job_id=?').bind(id).first<{id:string;paid_attempt:number}>();
+        if (transcript) {
+          const response = await mediaServiceRequest(env, `/compression/${transcriptionAttemptId(transcript.id,transcript.paid_attempt)}`, {method:'DELETE',signal:AbortSignal.timeout(5000)});
+          if (!response.ok) throw new Error('Media cancellation pending.');
+        }
+      }
       try { const instance = await env.PROCESSING!.get(preparationAttemptId(id,attempt)); const status = await instance.status(); if (!['complete', 'terminated', 'errored'].includes(status.status)) await instance.terminate(); }
       catch (error) { if (!(error instanceof Error && /^instance\.not_found(?::|$)/.test(error.message))) throw error; }
     } : undefined,
