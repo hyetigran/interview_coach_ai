@@ -44,6 +44,30 @@ export async function extractAudio(source, directory, signal) {
   return { target, bytes: bytes + 44 };
 }
 
+// Private bundle: four-byte manifest length, JSON manifest, then MP3 parts in order.
+// Offsets refer to the original PCM timeline; provider labels remain part-scoped.
+export async function compressChunks(source, directory, signal) {
+  const probe=JSON.parse(await run('ffprobe',['-v','error','-protocol_whitelist','file','-format_whitelist','wav','-i',source,'-show_entries','format=duration','-of','json'],signal));
+  const durationMs=Math.round(Number(probe.format?.duration)*1000);
+  if(!Number.isSafeInteger(durationMs)||durationMs<=0||durationMs>3600000)throw new InvalidRecording('Recordings must contain audio and be no longer than 60 minutes.');
+  const chunks=[];
+  for(let offsetMs=0;offsetMs<durationMs;offsetMs+=1200000){
+    const index=chunks.length,duration=Math.min(1200000,durationMs-offsetMs),target=join(directory,`part-${index}.mp3`);
+    await run('ffmpeg',['-v','error','-protocol_whitelist','file','-format_whitelist','wav','-ss',String(offsetMs/1000),'-i',source,'-map','0:a:0','-ac','1','-ar','16000','-b:a','32k','-t',String(duration/1000),'-y',target],signal);
+    const bytes=(await stat(target)).size;
+    if(!bytes)throw new InvalidRecording('A transcription part could not be encoded.');
+    chunks.push({index,offsetMs,durationMs:duration,bytes});
+  }
+  const manifest=Buffer.from(JSON.stringify({version:1,chunks})),length=Buffer.alloc(4);
+  length.writeUInt32BE(manifest.length);
+  const bytes=4+manifest.length+chunks.reduce((sum,chunk)=>sum+chunk.bytes,0);
+  if(bytes>15000000)throw new InvalidRecording('Compressed recording exceeds transcription limits.');
+  const target=join(directory,'transcription-parts.bin');
+  await writeFile(target,Buffer.concat([length,manifest]),{mode:0o600});
+  for(const chunk of chunks)await pipeline(createReadStream(join(directory,`part-${chunk.index}.mp3`)),createWriteStream(target,{flags:'a'}),{signal});
+  return {target,bytes,chunks};
+}
+
 export function mediaServer(secret, temporaryRoot = tmpdir(), initialized = Promise.resolve()) {
   let ready = false; initialized.then(() => { ready = true; });
   const operations = new Map();
