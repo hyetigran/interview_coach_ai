@@ -129,3 +129,22 @@ Run `pnpm test` for deterministic coverage and
 request with synthetic text and writes its cost record to `/tmp` for importing
 into the shared pilot ledger. Real-interview grouping quality and deployed
 acceptance remain separate from these synthetic/local checks.
+
+Coaching (ticket #8) processes complete question threads independently after
+question grouping. A pinned GPT-4.1 mini draft is structurally validated, then a
+separate bounded support-check request rejects unsupported advice before it is
+published. Both calls reserve budget before the first request; prompt, rubric,
+schema, verification and model versions are persisted. There is no automatic
+repair loop. Unclear questions or attribution produce a clarification request
+without a paid call. Successful threads remain usable if another fails.
+
+The UI separates the original answer from a proposed future answer, rationale,
+missing-fact questions and cited audio evidence. Exact citations and an automated
+support check are not independent quality validation. Advice remains unevaluated
+until the permissioned independent-review gate passes. Source changes mark advice
+outdated; deletion removes retained advice, source snapshots and provider receipts.
+
+`OPENAI_COACHING_SMOKE=1 pnpm test tests/coaching-integration.test.ts` runs the
+opt-in paid synthetic draft/support test and writes its cost rows under `/tmp`.
+The implementation uses the native Responses HTTP API with a shared bounded
+adapter; no client-side credential or third-party inference proxy is involved.

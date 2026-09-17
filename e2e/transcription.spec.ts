@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 
 test('real OpenAI transcript survives leaving the page and supports timestamped playback', async ({ page, context }) => {
   test.skip(!process.env.OPENAI_TEST_WAV, 'Explicit paid integration test requires a permitted OPENAI_TEST_WAV fixture.');
-  test.setTimeout(180000);
+  test.setTimeout(300000);
   const email = `speech-${randomUUID()}@example.com`;
   const invitation = execFileSync('node', ['scripts/invite.mjs', email], { encoding: 'utf8' }).trim().split('\n').at(-1)!;
   const origin = 'http://127.0.0.1:3000';
@@ -39,6 +39,9 @@ test('real OpenAI transcript survives leaving the page and supports timestamped 
   await expect(page.getByText('Your voice is confirmed.', { exact: true })).toBeVisible();
   await expect.poll(async () => (await (await context.request.get(path + '/threads')).json())?.state, { timeout: 60000 }).toBe('ready');
   await expect(page.getByRole('heading', { name: 'Question threads', exact: true })).toBeVisible();
+  await expect.poll(async () => (await (await context.request.get(path + '/coaching')).json())?.state, { timeout: 120000 }).toMatch(/^(ready|partial)$/);
+  const coaching=await (await context.request.get(path + '/coaching')).json();
+  expect(coaching.jobs.every((job:{state:string})=>['ready','withheld'].includes(job.state))).toBe(true);
   const deletion = await context.request.delete(path, { headers: { origin }, data: {} }); expect([202,204]).toContain(deletion.status());
   expect((await context.request.get(path + '/transcript')).status()).toBe(404);
 });

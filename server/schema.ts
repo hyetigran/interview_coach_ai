@@ -80,3 +80,11 @@ export const groupingRuns = sqliteTable('grouping_runs', {
 export const groupingChunks = sqliteTable('grouping_chunks', {
   id:text().primaryKey(),runId:text('run_id').notNull(),ordinal:integer().notNull(),state:text().notNull().default('queued'),result:text(),error:text(),startedAt:integer('started_at'),
 },table=>[uniqueIndex('grouping_chunk_ordinal').on(table.runId,table.ordinal)]);
+
+export const coachingRuns = sqliteTable('coaching_runs',{
+ id:text().primaryKey(),reviewId:text('review_id').notNull(),ownerId:text('owner_id').notNull(),revision:integer().notNull(),state:text().notNull().default('running'),deadline:integer().notNull(),
+ model:text().notNull(),promptVersion:text('prompt_version').notNull(),rubricVersion:text('rubric_version').notNull(),schemaVersion:text('schema_version').notNull(),verificationVersion:text('verification_version').notNull(),
+});
+export const coachingJobs = sqliteTable('coaching_jobs',{
+ id:text().primaryKey(),runId:text('run_id').notNull(),threadId:text('thread_id').notNull(),state:text().notNull().default('queued'),sources:text(),draft:text(),result:text(),error:text(),startedAt:integer('started_at'),draftDispatched:integer('draft_dispatched').notNull().default(0),verifyDispatched:integer('verify_dispatched').notNull().default(0),
+},table=>[uniqueIndex('coaching_thread').on(table.runId,table.threadId)]);
