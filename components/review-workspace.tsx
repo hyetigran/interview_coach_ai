@@ -8,12 +8,14 @@ import type { Review, ReviewPage } from '@/lib/reviews/contracts';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { AudioUpload } from '@/components/audio-upload';
 
 type Candidate = { id: string; name: string; email: string };
 export function ReviewWorkspace({ reviewId }: { reviewId?: string }) {
   const client = useQueryClient();
   const router = useRouter();
   const [error, setError] = useState('');
+  const [deletionPending, setDeletionPending] = useState(false);
   const me = useQuery({ queryKey: ['me'], queryFn: () => api<Candidate>('/api/me'), retry: false });
   const ownerId = me.data?.id;
   useEffect(() => { if (me.error instanceof RequestError && me.error.status === 401) { client.clear(); router.replace('/sign-in'); } }, [me.error, router, client]);
@@ -29,9 +31,10 @@ export function ReviewWorkspace({ reviewId }: { reviewId?: string }) {
     onSuccess: review => { client.invalidateQueries({ queryKey: ['reviews', ownerId] }); router.push(`/reviews/${review.id}`); },
   });
   const remove = useMutation({
-    mutationFn: () => api<void>(`/api/reviews/${reviewId}`, { method: 'DELETE' }),
-    onSuccess: () => { client.removeQueries({ queryKey: ['review', ownerId, reviewId] }); client.invalidateQueries({ queryKey: ['reviews', ownerId] }); router.replace('/reviews'); },
+    mutationFn: () => api<{ cleanupPending: boolean } | undefined>(`/api/reviews/${reviewId}`, { method: 'DELETE' }),
+    onSuccess: result => { if (result?.cleanupPending) { setDeletionPending(true); client.invalidateQueries({ queryKey: ['review', ownerId, reviewId] }); return; } client.removeQueries({ queryKey: ['review', ownerId, reviewId] }); client.invalidateQueries({ queryKey: ['reviews', ownerId] }); router.replace('/reviews'); },
   });
+  const deletion = useQuery({ queryKey: ['deletion', ownerId, reviewId], queryFn: () => api<{ cleanupPending: boolean }>(`/api/reviews/${reviewId}/deletion`), enabled: Boolean(ownerId && reviewId && (deletionPending || (detail.error instanceof RequestError && detail.error.status === 404))), refetchInterval: query => query.state.data?.cleanupPending ? 5000 : false });
   async function signOut() {
     try { await api('/api/auth/sign-out', { method: 'POST', body: '{}' }); client.clear(); router.replace('/sign-in'); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to sign out.'); }
@@ -45,7 +48,8 @@ export function ReviewWorkspace({ reviewId }: { reviewId?: string }) {
       <Link href="/reviews" className="text-sm underline">All reviews</Link>
       {detail.isPending && <p role="status" className="mt-6">Loading review…</p>}
       {detail.error && <p role="alert" className="mt-6">{detail.error.message}</p>}
-      {detail.data && <><h1 className="mt-6 text-3xl font-medium">{detail.data.title}</h1><p className="mt-3 text-muted-foreground">{detail.data.role} · {detail.data.origin === 'hiring' ? 'Hiring interview' : 'Mock interview'}</p><div className="my-8 rounded-xl border p-6"><h2 className="font-medium">Your review is saved</h2><p className="mt-2 text-sm text-muted-foreground">Recording upload will be available in the next pilot update.</p></div><Button variant="destructive" disabled={remove.isPending} onClick={() => { if (window.confirm('Delete this review? This cannot be undone.')) remove.mutate(); }}>{remove.isPending ? 'Deleting…' : 'Delete review'}</Button>{remove.error && <p role="alert" className="mt-3 text-destructive">{remove.error.message}</p>}</>}
+      {deletion.data?.cleanupPending && <div className="mt-4"><p role="status">Access is blocked. Recording cleanup is still pending and will retry automatically.</p><Button onClick={() => remove.mutate()} disabled={remove.isPending}>Retry cleanup</Button></div>}
+      {detail.data && !deletionPending && <><h1 className="mt-6 text-3xl font-medium">{detail.data.title}</h1><p className="mt-3 text-muted-foreground">{detail.data.role} · {detail.data.origin === 'hiring' ? 'Hiring interview' : 'Mock interview'}</p><AudioUpload reviewId={reviewId} ownerId={me.data.id} /><Button variant="destructive" disabled={remove.isPending} onClick={() => { if (window.confirm('Delete this review? This cannot be undone.')) remove.mutate(); }}>{remove.isPending ? 'Deleting…' : 'Delete review'}</Button>{remove.error && <p role="alert" className="mt-3 text-destructive">{remove.error.message}</p>}</>}
     </section> : <div className="grid gap-12 py-12 md:grid-cols-2">
       <section><h1 className="text-3xl font-medium">Your reviews</h1><p className="mt-3 text-sm text-muted-foreground">A private place to reflect on past interviews.</p>
         {list.isPending && <p role="status" className="mt-6">Loading reviews…</p>}

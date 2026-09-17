@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 function invite(email: string) {
   const flags = process.env.E2E_PREVIEW_ORIGIN ? ['--remote', '--env', 'preview'] : [];
@@ -60,10 +63,34 @@ test('invited candidate creates, reopens after sign-in, and deletes a review', a
   await page.getByRole('link', { name: /Hiring manager discussion/ }).click();
   await expect(page).toHaveURL(savedUrl);
   await expect(page.getByRole('heading', { name: 'Hiring manager discussion' })).toBeVisible();
+  const folder = mkdtempSync(join(tmpdir(), 'interview-coach-audio-'));
+  try {
+    const size = 5 * 1024 * 1024 + 44;
+    const bytes = new Uint8Array(size); const header = new DataView(bytes.buffer);
+    for (const [offset, value] of [[0, 'RIFF'], [8, 'WAVE'], [12, 'fmt '], [36, 'data']] as const) bytes.set(new TextEncoder().encode(value), offset);
+    header.setUint32(4, size - 8, true); header.setUint32(16, 16, true); header.setUint16(20, 1, true); header.setUint16(22, 1, true);
+    header.setUint32(24, 16000, true); header.setUint32(28, 32000, true); header.setUint16(32, 2, true); header.setUint16(34, 16, true); header.setUint32(40, size - 44, true);
+    const audioPath = join(folder, 'synthetic.wav'); writeFileSync(audioPath, bytes);
+    await page.route('**/parts/2', route => route.abort('failed'), { times: 1 });
+    await page.getByLabel('WAV recording', { exact: true }).setInputFiles(audioPath);
+    await page.getByRole('button', { name: 'Upload recording', exact: true }).click();
+    await expect(page.getByRole('alert').filter({ hasText: /fetch|network/i })).toBeVisible();
+    await page.reload();
+    await expect(page.getByText(/Reselect the original file to resume/)).toBeVisible();
+    await page.getByLabel('WAV recording', { exact: true }).setInputFiles(audioPath);
+    await page.getByRole('button', { name: 'Resume upload', exact: true }).click();
+    await expect(page.getByLabel('Private interview recording')).toBeVisible();
+    const audio = await page.request.get(endpoint + '/audio', { headers: { range: 'bytes=0-43' } });
+    expect(audio.status()).toBe(206);
+    expect(audio.headers()['content-range']).toBe(`bytes 0-43/${size}`);
+    expect((await audio.body()).byteLength).toBe(44);
+    expect((await page.request.get(endpoint + '/audio', { headers: { range: 'bytes=999999999-' } })).status()).toBe(416);
+  } finally { rmSync(folder, { recursive: true, force: true }); }
   await page.screenshot({ path: 'test-results/review-workspace.png', fullPage: true });
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: 'Delete review', exact: true }).click();
   await expect(page.getByText('No reviews yet. Create your first review to get started.')).toBeVisible();
+  expect((await page.request.get(endpoint + '/audio')).status()).toBe(404);
   await page.goto(savedUrl);
   await expect(page.getByRole('alert').filter({ hasText: 'Review not found.' })).toBeVisible();
 });

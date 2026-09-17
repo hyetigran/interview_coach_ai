@@ -1,20 +1,22 @@
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createApplication } from '../server/application';
 
-const runtime = new Miniflare(convertV4MiniflareOptions({ modules: true, script: 'export default { fetch() { return new Response("test"); } }', d1Databases: ['DB'] }));
+const runtime = new Miniflare(convertV4MiniflareOptions({ modules: true, script: 'export default { fetch() { return new Response("test"); } }', d1Databases: ['DB'], r2Buckets: ['MEDIA'] }));
 const origin = 'http://localhost:3000';
 const inviteToken = 'test-invitation-token-with-at-least-32-characters';
 let app: ReturnType<typeof createApplication>;
 beforeAll(async () => {
   const binding = await runtime.getD1Database('DB');
-  for (const statement of readFileSync(new URL('../drizzle/0000_reviews.sql', import.meta.url), 'utf8').split('--> statement-breakpoint')) {
-    if (statement.trim()) await binding.prepare(statement.trim()).run();
+  for (const file of readdirSync(new URL('../drizzle/', import.meta.url)).filter(f => f.endsWith('.sql')).sort()) {
+    for (const statement of readFileSync(new URL('../drizzle/' + file, import.meta.url), 'utf8').split('--> statement-breakpoint')) {
+      if (statement.trim()) await binding.prepare(statement.trim()).run();
+    }
   }
   await binding.prepare('INSERT INTO invitations (email, token_hash, expires_at) VALUES (?, ?, ?)').bind('candidate@example.com', createHash('sha256').update(inviteToken).digest('hex'), Date.now() + 3600000).run();
-  app = createApplication({ DB: binding as unknown as D1Database, APP_ORIGIN: origin, AUTH_SECRET: 'test-secret-used-only-in-isolated-tests-123456789' });
+  app = createApplication({ DB: binding as unknown as D1Database, MEDIA: await runtime.getR2Bucket('MEDIA') as unknown as R2Bucket, APP_ORIGIN: origin, AUTH_SECRET: 'test-secret-used-only-in-isolated-tests-123456789' });
 });
 afterAll(() => runtime.dispose());
 let clientNumber = 0;
