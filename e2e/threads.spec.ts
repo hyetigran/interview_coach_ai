@@ -1,3 +1,4 @@
+import { registerInvited } from './register-invited';
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -8,7 +9,7 @@ test('question threads open by keyboard and retain missing answers and uncertain
   const email=`threads-${randomUUID()}@example.com`;
   const invitation=execFileSync('node',['scripts/invite.mjs',email],{encoding:'utf8'}).trim().split('\n').at(-1)!;
   const origin='http://127.0.0.1:3000';
-  expect((await context.request.post('/api/auth/sign-up/email',{headers:{origin,'x-invitation-token':invitation},data:{name:'Threads Test',email,password:randomUUID()+randomUUID()}})).ok()).toBeTruthy();
+  expect((await registerInvited(context.request,{headers:{origin,'x-invitation-token':invitation},data:{name:'Threads Test',email,password:randomUUID()+randomUUID()}})).ok()).toBeTruthy();
   const review=await (await context.request.post('/api/reviews',{headers:{origin},data:{title:'Question navigation',role:'Engineer',origin:'mock'}})).json();
   const transcript:Transcript={version:1,model:'gpt-4o-transcribe-diarize',audioSha256:'hash',durationMs:9000,utterances:[
     {id:'q',speaker:'A',text:'What did you build?',startMs:0,endMs:2000,overlap:false},

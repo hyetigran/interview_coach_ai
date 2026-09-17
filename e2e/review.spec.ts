@@ -1,3 +1,4 @@
+import { registerInvited } from './register-invited';
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -36,7 +37,7 @@ test('invited candidate creates, reopens after sign-in, and deletes a review', a
   try {
     expect((await other.get(endpoint)).status()).toBe(401);
     const otherEmail = `browser-${randomUUID()}@example.com`;
-    const registration = await other.post('/api/auth/sign-up/email', {
+    const registration = await registerInvited(other, {
       headers: { origin, 'x-invitation-token': invite(otherEmail) },
       data: { name: 'Other Candidate', email: otherEmail, password: randomUUID() + randomUUID() },
     });

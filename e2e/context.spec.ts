@@ -1,10 +1,11 @@
+import { registerInvited } from './register-invited';
 import {test,expect} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 test('candidate selects and excludes background, detects concurrent edits and deletes the context',async({page,context})=>{
  const email=`context-${randomUUID()}@example.com`,origin='http://127.0.0.1:3000';
  const invitation=execFileSync('node',['scripts/invite.mjs',email],{encoding:'utf8'}).trim().split('\n').at(-1)!;
- expect((await context.request.post('/api/auth/sign-up/email',{headers:{origin,'x-invitation-token':invitation},data:{name:'Context Test',email,password:randomUUID()+randomUUID()}})).ok()).toBeTruthy();
+ expect((await registerInvited(context.request,{headers:{origin,'x-invitation-token':invitation},data:{name:'Context Test',email,password:randomUUID()+randomUUID()}})).ok()).toBeTruthy();
  const review=await (await context.request.post('/api/reviews',{headers:{origin},data:{title:'Selected background',role:'Engineer',origin:'mock'}})).json();const path=`/api/reviews/${review.id}`;
  await page.goto(`/reviews/${review.id}`);await page.locator('summary').filter({hasText:'Target role and optional background'}).click();
  await page.getByRole('textbox',{name:'Target role',exact:true}).fill('Staff engineer');await page.getByRole('textbox',{name:'Paste resume text',exact:true}).fill('I contributed to a migration.');await page.getByRole('checkbox',{name:'Use resume text in future coaching'}).check();

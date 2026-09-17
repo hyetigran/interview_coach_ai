@@ -1,3 +1,4 @@
+import { registerInvited } from './register-invited';
 import {test,expect} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
@@ -8,7 +9,7 @@ test('candidate saves preparation, recovers a conflict, returns in a new session
  test.setTimeout(90000);
  const email=`preparation-${randomUUID()}@example.com`,password=randomUUID()+randomUUID(),origin='http://127.0.0.1:3000';
  const invitation=execFileSync('node',['scripts/invite.mjs',email],{encoding:'utf8'}).trim().split('\n').at(-1)!;
- const signup=await context.request.post('/api/auth/sign-up/email',{headers:{origin,'x-invitation-token':invitation},data:{name:'Preparation Test',email,password}});expect(signup.ok()).toBeTruthy();const owner=(await signup.json()).user.id;
+ const signup=await registerInvited(context.request,{headers:{origin,'x-invitation-token':invitation},data:{name:'Preparation Test',email,password}});expect(signup.ok()).toBeTruthy();const owner=(await signup.json()).user.id;
  const review=await (await context.request.post('/api/reviews',{headers:{origin},data:{title:'Saved preparation test',role:'Engineer',origin:'mock'}})).json();const endpoint=`/api/reviews/${review.id}/preparation`,job=randomUUID(),run=randomUUID();
  // Seed a completed synthetic coaching result; persistence, authentication and
  // annotations use real endpoints. Provider behavior is covered independently.

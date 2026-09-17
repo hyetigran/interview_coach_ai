@@ -1,3 +1,4 @@
+import { registerInvited } from './register-invited';
 import {test,expect} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
@@ -7,7 +8,7 @@ import {join} from 'node:path';
 test('candidate corrects grouping with keyboard selection and repairs uncertain attribution',async({page,context})=>{
  test.setTimeout(90000);const origin='http://127.0.0.1:3000',email=`correction-${randomUUID()}@example.com`;
  const invitation=execFileSync('node',['scripts/invite.mjs',email],{encoding:'utf8'}).trim().split('\n').at(-1)!;
- const signup=await context.request.post('/api/auth/sign-up/email',{headers:{origin,'x-invitation-token':invitation},data:{name:'Correction Test',email,password:randomUUID()+randomUUID()}});expect(signup.ok()).toBeTruthy();const owner=(await signup.json()).user.id;
+ const signup=await registerInvited(context.request,{headers:{origin,'x-invitation-token':invitation},data:{name:'Correction Test',email,password:randomUUID()+randomUUID()}});expect(signup.ok()).toBeTruthy();const owner=(await signup.json()).user.id;
  const review=await (await context.request.post('/api/reviews',{headers:{origin},data:{title:'Grouping correction test',role:'Engineer',origin:'mock'}})).json();const endpoint=`/api/reviews/${review.id}`,id=randomUUID(),key=`transcripts/${review.id}/${id}.json`;
  const transcript={version:1,model:'gpt-4o-transcribe-diarize',audioSha256:'fixture',durationMs:2000,utterances:[{id:'q',speaker:'A',text:'What did you build?',startMs:0,endMs:1000,overlap:false},{id:'a',speaker:'B',text:'I built a repeated repeated café.',startMs:1000,endMs:2000,overlap:false}]};
  const groupId=randomUUID(),confirmation=groupId;const groups=[{id:'original-question',question:[{transcriptId:id,utteranceId:'q',quote:transcript.utterances[0].text,start:0,end:transcript.utterances[0].text.length,startMs:0,endMs:1000,position:0,uncertain:false}],answers:[],parentId:null,uncertain:false}];
