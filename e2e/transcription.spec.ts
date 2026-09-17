@@ -1,8 +1,11 @@
 import { registerInvited } from './register-invited';
-import { test, expect } from '@playwright/test';
+import { test, expect as baseExpect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+
+const expect = baseExpect.configure({timeout: process.env.E2E_PREVIEW_ORIGIN ? 30000 : 5000});
+test.use({actionTimeout:30000});
 
 test('real OpenAI transcript survives leaving the page and supports timestamped playback', async ({ page, context }) => {
   test.skip(!process.env.OPENAI_TEST_WAV, 'Explicit paid integration test requires a permitted OPENAI_TEST_WAV fixture.');
@@ -35,7 +38,7 @@ test('real OpenAI transcript survives leaving the page and supports timestamped 
   const selected=await (await context.request.get(path+'/context')).json();
   expect((await context.request.put(path+'/context',{headers:{origin},data:{revision:selected.revision,context:{...selected.context,resume:{text:'I contributed to a migration with two engineers.',selected:true}}}})).ok()).toBeTruthy();
   const candidateLabel = transcript.transcript.utterances.find((u: { speaker: string | null; text:string }) => /event.driven/i.test(u.text))?.speaker ?? transcript.transcript.utterances.find((u: { speaker: string | null }) => u.speaker)?.speaker; expect(candidateLabel).toBeTruthy();
-  await page.getByRole('button', { name: `Listen to speaker ${candidateLabel}`, exact: true }).click();
+  await page.getByRole('button', { name: `Listen to Speaker ${candidateLabel}`, exact: true }).click();
   const candidate = page.getByRole('checkbox', { name: `Speaker ${candidateLabel}`, exact: true });
   await candidate.focus(); await page.keyboard.press('Space'); await expect(candidate).toBeChecked();
   await page.getByRole('button', { name: 'Confirm my voice', exact: true }).click();
@@ -43,9 +46,13 @@ test('real OpenAI transcript survives leaving the page and supports timestamped 
   await page.reload(); await expect(page.getByRole('checkbox', { name: `Speaker ${candidateLabel}`, exact: true })).toBeChecked();
   await expect(page.getByText('Your voice is confirmed.', { exact: true })).toBeVisible();
   await expect.poll(async () => (await (await context.request.get(path + '/threads')).json())?.state, { timeout: 60000 }).toBe('ready');
+  const grouped=await (await context.request.get(path + '/threads')).json();
+  expect(grouped.groups.length).toBeGreaterThan(0);
   await expect(page.getByRole('heading', { name: 'Question threads', exact: true })).toBeVisible();
   await expect.poll(async () => (await (await context.request.get(path + '/coaching')).json())?.state, { timeout: 120000 }).toMatch(/^(ready|partial)$/);
   const coaching=await (await context.request.get(path + '/coaching')).json();
+  expect(coaching.jobs.length).toBeGreaterThan(0);
+  expect(coaching.jobs.some((job:{state:string})=>job.state==='ready')).toBe(true);
   expect(coaching.jobs.every((job:{state:string})=>['ready','withheld'].includes(job.state))).toBe(true);
   const contextBefore=await (await context.request.get(path+'/context')).json();
   const contextAfter=await (await context.request.put(path+'/context',{headers:{origin},data:{revision:contextBefore.revision,context:{...contextBefore.context,role:'Staff engineer'}}})).json();
@@ -53,5 +60,5 @@ test('real OpenAI transcript survives leaving the page and supports timestamped 
   await expect.poll(async()=> (await (await context.request.get(path+'/coaching')).json())?.state,{timeout:120000}).toMatch(/^(ready|partial)$/);
   const deletion = await context.request.delete(path, { headers: { origin }, data: {} }); expect([202,204]).toContain(deletion.status());
   expect((await context.request.get(path + '/transcript')).status()).toBe(404);
-  } finally { await context.request.delete(path, {headers:{origin},data:{}}); }
+  } finally { await context.request.delete(path, {headers:{origin},data:{},timeout:10000}).catch(() => {}); }
 });
