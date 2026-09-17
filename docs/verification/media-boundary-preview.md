@@ -20,8 +20,10 @@ The 3600-second case passed twice, each in approximately 1.1 minutes including s
 
 The first 3601-second case failed at upload initiation with HTTP 503; it did not exercise duration rejection. The next run reached preparation and exposed a defect: the first adapter response correctly rejected excessive duration, but Workflow replay replaced that reason with an already-submitted error. Preparation now persists the invalid reason and returns it on replay without another adapter call. A regression that recreates the processing module failed before the fix and passed afterward.
 
+After deploying the fix, the 3601-second preview case passed in 58.9 seconds. It verified the visible 60-minute rejection after reload, no eligible retry or published audio, immediate access denial after deletion, and eventual cleanup completion. The full application suite passed 164 tests with three opt-in provider skips; lint, typechecking, and both code-review axes passed.
+
 The first successful hour-long run left two media reservations totaling $0.20 unsettled. These are conservative reservations, not measured charges. Hosting and storage costs are separate. The test does not claim full-length transcription or coaching success.
 
 ## Still required
 
-Verify the corrected duration explanation on preview. Keep #4 open for representative exported interview recordings, the remaining deployed format/error/deletion matrix, and cost reconciliation. Keep #15 open for the full 60-minute audio and video journey through saved preparation and all its other criteria. Synthetic silence does not establish transcription accuracy, speaker attribution, independent coaching quality, or candidate usability.
+Keep #4 open for representative exported interview recordings, the remaining deployed format/error/deletion matrix, and cost reconciliation. Keep #15 open for the full 60-minute audio and video journey through saved preparation and all its other criteria. Synthetic silence does not establish transcription accuracy, speaker attribution, independent coaching quality, or candidate usability.
