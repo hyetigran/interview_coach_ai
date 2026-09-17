@@ -1,5 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 interface CloudflareEnv {
+  LOCAL_MEDIA_ADAPTER?: string;
   DB: D1Database;
   MEDIA: R2Bucket;
   PROCESSING?: Workflow<{ jobId: string }>;

@@ -19,7 +19,7 @@ export function AudioUpload({ reviewId, ownerId }: { reviewId: string; ownerId: 
   const current = state.data?.upload;
   const upload = useMutation({
     mutationFn: async () => {
-      if (!file) throw new Error('Select your WAV recording.');
+      if (!file) throw new Error('Select your recording.');
       if (file.size > MAX_AUDIO_BYTES) throw new Error('The file exceeds 256 MiB.');
       abort.current = new AbortController(); const signal = abort.current.signal;
       const latest = await api<MediaState>(path + '/media');
@@ -49,15 +49,15 @@ export function AudioUpload({ reviewId, ownerId }: { reviewId: string; ownerId: 
   const savedBytes = current?.parts.reduce((sum, part) => sum + Math.min(PART_BYTES, current.size - (part.number - 1) * PART_BYTES), 0) ?? 0;
   return <section className="my-8 rounded-xl border p-6" aria-labelledby="recording-heading">
     <h2 id="recording-heading" className="font-medium">Interview recording</h2>
-    <p className="mt-2 text-sm text-muted-foreground">WAV audio, PCM 16-bit, mono or stereo, 8–48 kHz, with a standard 44-byte header. Maximum 256 MiB and 60 minutes. Your recording stays private and is retained until you delete this review.</p>
+    <p className="mt-2 text-sm text-muted-foreground">WAV audio (16-bit PCM), MP4/MOV video (H.264 + AAC), or WebM video (VP8/VP9 + Opus). Videos must have one audio track. Maximum 256 MiB and 60 minutes. Your recording stays private and is retained until you delete this review.</p>
     {state.data && <p className="mt-2 text-sm">{state.data.admitted} of {state.data.allowance} recording admissions used; {state.data.reserved} reserved. Deleting a recording does not restore an admission.</p>}
     {state.isPending && <p role="status" className="mt-4">Loading recording…</p>}
     {state.error && <p role="alert" className="mt-4">{state.error.message}</p>}
-    {current?.state === 'admitted' ? <div className="mt-4"><p className="mb-3">{current.name}</p><audio controls preload="metadata" src={path + '/audio'} aria-label="Private interview recording" /><PreparationStatus reviewId={reviewId} /></div> : <>
-      {current?.state === 'cleanup' && <p role="status" className="mt-4">The previous upload expired, was invalid, or was cancelled. Select a WAV file to start again; its unused reservation has been released.</p>}
+    {current?.state === 'admitted' ? <div className="mt-4"><p className="mb-3">{current.name}</p><PreparationStatus reviewId={reviewId} /></div> : <>
+      {current?.state === 'cleanup' && <p role="status" className="mt-4">The previous upload expired, was invalid, or was cancelled. Select a recording to start again; its unused reservation has been released.</p>}
       {current?.state === 'uploading' && <p className="mt-4">Saved {Math.round(savedBytes / current.size * 100)}% of {current.name}. Reselect the original file to resume. Upload expires {new Date(current.expiresAt).toLocaleString()}.</p>}
       {current?.state === 'completing' && <p role="status" className="mt-4">Checking your recording. If this was interrupted, reselect the file and retry after one minute.</p>}
-      <div className="mt-4 space-y-3"><Label htmlFor="audio-file">WAV recording</Label><Input id="audio-file" type="file" accept=".wav,audio/wav" disabled={upload.isPending} onChange={event => { setFile(event.target.files?.[0] ?? null); setProgress(0); upload.reset(); }} />
+      <div className="mt-4 space-y-3"><Label htmlFor="audio-file">Interview recording file</Label><Input id="audio-file" type="file" accept=".wav,.mp4,.mov,.webm" disabled={upload.isPending} onChange={event => { setFile(event.target.files?.[0] ?? null); setProgress(0); upload.reset(); }} />
         <Button disabled={!file || upload.isPending || state.isPending} onClick={() => upload.mutate()}>{upload.isPending ? 'Uploading…' : current && current.state !== 'cleanup' ? 'Resume upload' : 'Upload recording'}</Button>
         {upload.isPending && <Button variant="outline" className="ml-3" onClick={() => abort.current?.abort()}>Pause upload</Button>}
         {upload.isPending && file && <p role="status">{Math.round(progress / file.size * 100)}% uploaded</p>}

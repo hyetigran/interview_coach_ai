@@ -8,6 +8,7 @@ function start(command, args) {
 }
 process.on('SIGINT', () => stop()); process.on('SIGTERM', () => stop());
 const timer = setInterval(() => { if (!stopping) fetch('http://127.0.0.1:8789/cdn-cgi/local/scheduled', { signal: AbortSignal.timeout(5000) }).catch(() => {}); }, 15000);
+start('node', ['scripts/media-adapter.mjs']);
 start('pnpm', ['exec', 'wrangler', 'dev', '--config', 'wrangler.jobs.jsonc', '--ip', '127.0.0.1', '--port', '8789']);
 let ready = false;
 for (let attempt = 0; attempt < 100 && !stopping; attempt++) {

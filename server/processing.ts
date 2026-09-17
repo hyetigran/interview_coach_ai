@@ -2,10 +2,10 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { validateWave } from './audio-format';
 import { MAX_AUDIO_BYTES } from '../lib/media/contracts';
-type Environment = { DB: D1Database; MEDIA: R2Bucket };
+type Environment = { DB: D1Database; MEDIA: R2Bucket; LOCAL_MEDIA_ADAPTER?: string; AUTH_SECRET?: string };
 type Job = { id: string; review_id: string; owner_id: string; upload_id: string; state: string; dispatch_state: string; revision: number; deadline: number; result: string | null; error: string | null };
 const active = "EXISTS(SELECT 1 FROM reviews WHERE reviews.id=processing_jobs.review_id AND reviews.owner_id=processing_jobs.owner_id AND reviews.lifecycle='active' AND reviews.input_revision=processing_jobs.revision)";
-export type PreparationResult = { sourceKey: string; sha256: string; bytes: number; durationMs: number; channels: number; sampleRate: number };
+export type PreparationResult = { sourceKey: string; sha256: string; bytes: number; durationMs: number; channels: number; sampleRate: number; audioKey?: string; audioBytes?: number; originalTimeOffsetMs?: number };
 export function initialJobStatement(db: D1Database, uploadId: string) {
   return db.prepare("INSERT OR IGNORE INTO processing_jobs(id,review_id,owner_id,upload_id,revision,created_at) SELECT 'prepare-'||uploads.id,uploads.review_id,uploads.owner_id,uploads.id,reviews.input_revision,? FROM uploads JOIN reviews ON reviews.id=uploads.review_id WHERE uploads.id=? AND uploads.state='admitted' AND reviews.lifecycle='active'").bind(Date.now(), uploadId);
 }
@@ -45,10 +45,22 @@ export function createProcessingModule(env: Environment, dispatch?: (id: string)
     const existing = await db.prepare(`SELECT result FROM processing_jobs WHERE id=? AND state='ready' AND ${active}`).bind(id).first<{ result: string }>();
     if (existing) return JSON.parse(existing.result);
     const job = await live(id);
-    const upload = await db.prepare("SELECT object_key,size FROM uploads WHERE id=? AND review_id=? AND state='admitted'").bind(job.upload_id, job.review_id).first<{ object_key: string; size: number }>();
+    const upload = await db.prepare("SELECT object_key,size,name FROM uploads WHERE id=? AND review_id=? AND state='admitted'").bind(job.upload_id, job.review_id).first<{ object_key: string; size: number; name: string }>();
     if (!upload) throw new Error('Recording is not available.');
-    const object = await bucket.get(upload.object_key);
-    if (!object || object.size !== upload.size || object.size > MAX_AUDIO_BYTES || object.httpMetadata?.contentType !== 'audio/wav') throw new Error('Recording size or media type is invalid.');
+    let audioKey = upload.object_key;
+    if (!/\.wav$/i.test(upload.name)) {
+      if (env.LOCAL_MEDIA_ADAPTER !== 'http://127.0.0.1:8790' || !env.AUTH_SECRET) throw new Error('Video preparation requires the local media service. Run pnpm dev.');
+      const source = await bucket.get(upload.object_key);
+      if (!source || source.size !== upload.size || source.size > MAX_AUDIO_BYTES) throw new Error('Recording is incomplete or too large.');
+      const response = await fetch(`${env.LOCAL_MEDIA_ADAPTER}/operations/${id}`, { method: 'POST', headers: { authorization: `Bearer ${env.AUTH_SECRET}` }, body: source.body, signal: AbortSignal.timeout(80000) });
+      if (!response.ok || !response.body) throw new Error((await response.text()).slice(0, 200) || 'Video preparation failed.');
+      await live(id);
+      audioKey = 'audio/' + job.upload_id;
+      await bucket.put(audioKey, response.body, { httpMetadata: { contentType: 'audio/wav' } });
+      try { await live(id); } catch (error) { await bucket.delete(audioKey); throw error; }
+    }
+    const object = await bucket.get(audioKey);
+    if (!object || (audioKey === upload.object_key && object.size !== upload.size) || object.size > MAX_AUDIO_BYTES || object.httpMetadata?.contentType !== 'audio/wav') throw new Error('Recording size or media type is invalid.');
     const hash = createHash('sha256'); const reader = object.body.getReader(); const header = new Uint8Array(44); let observed = 0;
     try {
       while (true) {
@@ -61,9 +73,9 @@ export function createProcessingModule(env: Environment, dispatch?: (id: string)
     } finally { reader.releaseLock(); }
     if (observed !== object.size) throw new Error('Recording is incomplete.');
     const audio = validateWave(header.buffer, observed);
-    const result: PreparationResult = { ...audio, sourceKey: upload.object_key, sha256: hash.digest('hex'), bytes: observed };
+    const result: PreparationResult = { ...audio, sourceKey: upload.object_key, sha256: hash.digest('hex'), bytes: observed, audioKey, audioBytes: observed, originalTimeOffsetMs: 0 };
     const published = await db.prepare(`UPDATE processing_jobs SET state='ready',result=?,error=NULL,finished_at=? WHERE id=? AND state='running' AND deadline>? AND ${active}`).bind(JSON.stringify(result), Date.now(), id, Date.now()).run();
-    if (!published.meta.changes) throw new Error('Preparation was cancelled or superseded.');
+    if (!published.meta.changes) { if (audioKey !== upload.object_key) await bucket.delete(audioKey); throw new Error('Preparation was cancelled or superseded.'); }
     return result;
   }
   async function fail(id: string, message = 'Recording preparation failed. Retry will be available in the recovery update.') {
@@ -103,6 +115,7 @@ export function createRuntimeProcessing(env: Environment & { PROCESSING?: Workfl
   return createProcessingModule(env,
     env.PROCESSING ? async id => { await env.PROCESSING!.createBatch([{ id, params: { jobId: id } }]); } : undefined,
     env.PROCESSING ? async id => {
+      if (env.LOCAL_MEDIA_ADAPTER === 'http://127.0.0.1:8790' && env.AUTH_SECRET) { const response = await fetch(`${env.LOCAL_MEDIA_ADAPTER}/operations/${id}`, { method: 'DELETE', headers: { authorization: `Bearer ${env.AUTH_SECRET}` }, signal: AbortSignal.timeout(5000) }); if (!response.ok) throw new Error('Media cancellation pending.'); }
       try { const instance = await env.PROCESSING!.get(id); const status = await instance.status(); if (!['complete', 'terminated', 'errored'].includes(status.status)) await instance.terminate(); }
       catch (error) { if (!(error instanceof Error && /^instance\.not_found(?::|$)/.test(error.message))) throw error; }
     } : undefined,

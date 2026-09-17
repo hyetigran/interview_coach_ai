@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
+    "test:media": "node --test scripts/media-adapter.test.mjs",
     "test:e2e": "playwright test",
     "build:worker": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare preview",

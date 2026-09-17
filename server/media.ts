@@ -5,8 +5,8 @@ import { MAX_AUDIO_BYTES, PART_BYTES, UPLOAD_LEASE_MS, type MediaState, type Upl
 export class MediaError extends Error { constructor(public status: number, message: string) { super(message); } }
 type Row = { id: string; owner_id: string; review_id: string; name: string; size: number; state: string; object_key: string; multipart_id: string | null; expires_at: number; admitted_at: number | null; lock_until: number };
 type Part = { number: number; etag: string; sha256: string };
-type Environment = { DB: D1Database; MEDIA: R2Bucket; AUTH_SECRET: string; RECORDING_ALLOWANCE?: string; PROCESSING?: Workflow<{ jobId: string }> };
-const inputSchema = z.object({ name: z.string().min(1).max(200).regex(/\.wav$/i), size: z.number().int().min(46).max(MAX_AUDIO_BYTES), actionId: z.uuid() }).strict();
+type Environment = { DB: D1Database; MEDIA: R2Bucket; AUTH_SECRET: string; RECORDING_ALLOWANCE?: string; LOCAL_MEDIA_ADAPTER?: string; PROCESSING?: Workflow<{ jobId: string }> };
+const inputSchema = z.object({ name: z.string().min(1).max(200).regex(/\.(wav|mp4|mov|webm)$/i), size: z.number().int().min(46).max(MAX_AUDIO_BYTES), actionId: z.uuid() }).strict();
 const activeReview = "EXISTS (SELECT 1 FROM reviews WHERE reviews.id=uploads.review_id AND reviews.owner_id=uploads.owner_id AND lifecycle='active')";
 const privateHeaders = { 'Cache-Control': 'private, no-store', 'Accept-Ranges': 'bytes', 'Content-Type': 'audio/wav', 'X-Content-Type-Options': 'nosniff' };
 async function digest(bytes: Uint8Array) { return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', Uint8Array.from(bytes))), b => b.toString(16).padStart(2, '0')).join(''); }
@@ -27,7 +27,7 @@ export function createMediaModule(env: Environment) {
   async function view(row: Row): Promise<UploadState> { return { id: row.id, name: row.name, size: row.size, state: row.state, expiresAt: row.expires_at, parts: (await parts(row.id)).map(p => ({ number: p.number, sha256: p.sha256 })) }; }
   async function cleanupRow(row: Row) {
     // Keep tombstones and object keys: a late completion can write after an earlier cleanup.
-    await Promise.all([row.multipart_id ? bucket.resumeMultipartUpload(row.object_key, row.multipart_id).abort() : Promise.resolve(), bucket.delete(row.object_key)]);
+    await Promise.all([row.multipart_id ? bucket.resumeMultipartUpload(row.object_key, row.multipart_id).abort() : Promise.resolve(), bucket.delete(row.object_key), bucket.delete('audio/' + row.id)]);
     await db.prepare('DELETE FROM upload_parts WHERE upload_id=?').bind(row.id).run();
     await db.prepare("UPDATE uploads SET cleaned_at=?, name='' WHERE id=? AND state='cleanup'").bind(Date.now(), row.id).run();
   }
@@ -50,7 +50,7 @@ export function createMediaModule(env: Environment) {
     if (!row) throw new MediaError(409, 'Recording allowance reached or review no longer available.');
     if (row.id !== id) return view(row);
     try {
-      const multipart = await bucket.createMultipartUpload(row.object_key, { httpMetadata: { contentType: 'audio/wav' } });
+      const multipart = await bucket.createMultipartUpload(row.object_key, { httpMetadata: { contentType: /\.wav$/i.test(row.name) ? 'audio/wav' : 'application/octet-stream' } });
       // Register even if deleted during creation, so the multipart ID can be reclaimed.
       await db.prepare('UPDATE uploads SET multipart_id=?, cleaned_at=NULL WHERE id=?').bind(multipart.uploadId, id).run();
       const updated = await db.prepare(`UPDATE uploads SET state='uploading' WHERE id=? AND state='initializing' AND expires_at>? AND ${activeReview}`).bind(id, Date.now()).run();
@@ -96,9 +96,9 @@ export function createMediaModule(env: Environment) {
     try {
       let object = await bucket.head(row.object_key);
       if (!object) object = await bucket.resumeMultipartUpload(row.object_key, row.multipart_id).complete(uploaded.map(p => ({ partNumber: p.number, etag: p.etag })));
-      if (object.size !== row.size || object.size > MAX_AUDIO_BYTES || object.httpMetadata?.contentType !== 'audio/wav') throw new MediaError(422, 'Stored recording metadata does not match the upload.');
-      const header = await bucket.get(row.object_key, { range: { offset: 0, length: 44 } });
-      if (!header) throw new Error('Recording unavailable'); try { validateWave(await header.arrayBuffer(), object.size); } catch (error) { throw new MediaError(422, error instanceof Error ? error.message : 'Invalid audio.'); }
+      if (object.size !== row.size || object.size > MAX_AUDIO_BYTES || object.httpMetadata?.contentType !== (/\.wav$/i.test(row.name) ? 'audio/wav' : 'application/octet-stream')) throw new MediaError(422, 'Stored recording metadata does not match the upload.');
+      if (/\.wav$/i.test(row.name)) { const header = await bucket.get(row.object_key, { range: { offset: 0, length: 44 } });
+      if (!header) throw new Error('Recording unavailable'); try { validateWave(await header.arrayBuffer(), object.size); } catch (error) { throw new MediaError(422, error instanceof Error ? error.message : 'Invalid audio.'); } }
       const publication = db.prepare(`UPDATE uploads SET state='admitted',admitted_at=?,lock_until=0 WHERE id=? AND claim_token=? AND state='completing' AND expires_at>? AND ${activeReview}`).bind(Date.now(), id, claimToken, Date.now());
       const [published] = await db.batch([publication, initialJobStatement(db, id)]);
       if (!published.meta.changes) {
@@ -138,6 +138,11 @@ export function createMediaModule(env: Environment) {
     await authorize(owner, review);
     const row = await db.prepare("SELECT * FROM uploads WHERE review_id=? AND owner_id=? AND state='admitted'").bind(review, owner).first<Row>();
     if (!row) throw new MediaError(404, 'Recording not found.');
+    if (!/\.wav$/i.test(row.name)) {
+      const job = await db.prepare("SELECT result FROM processing_jobs WHERE review_id=? AND owner_id=? AND state='ready' AND revision=(SELECT input_revision FROM reviews WHERE id=?)").bind(review, owner, review).first<{ result: string }>();
+      if (!job) throw new MediaError(409, 'Audio is still being prepared.');
+      const result = JSON.parse(job.result); row.object_key = result.audioKey; row.size = result.audioBytes;
+    }
     let start = 0, end = row.size - 1;
     if (range) {
       const m = /^bytes=(\d*)-(\d*)$/.exec(range);
