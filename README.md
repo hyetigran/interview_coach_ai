@@ -104,3 +104,28 @@ Provider validation on September 17: a generated 10.28-second two-voice intervie
 After transcription, listen to the short speaker samples and select every detected label that represents your voice. Confirmation is tied to that immutable transcript and survives reload. Unselected speaker labels and unidentified speech are preserved. Waiting for confirmation makes no paid calls and holds no automatic processing slot. Saving creates a durable continuation intent; account concurrency may keep it visibly queued. The next question-grouping ticket will consume the confirmed attribution.
 
 Live diarization is nondeterministic: a later run of the same two-voice synthetic fixture returned one speaker label. Browser checks verify the labels returned and persisted confirmation, while deterministic integration fixtures cover multi-label selection. This is a recorded quality limitation, not evidence of reliable speaker separation; real-corpus validation and per-passage corrections remain necessary.
+
+Question threads (ticket #7) run after voice confirmation through the continuation
+Workflow. Each bounded transcript window is grouped with
+`gpt-4.1-mini-2025-04-14` using strict structured output, no background documents,
+`store: false`, disabled truncation, and an 8,192-token output limit. A $0.45
+reservation covers the documented full context and output ceiling at $0.40/$1.60
+per million input/output tokens; actual usage settles the shared ledger. Model
+limits/prices: https://developers.openai.com/api/docs/models/gpt-4.1-mini .
+Unknown paid outcomes retain their reservation and never automatically resubmit.
+Responses API abuse-monitoring retention is governed by the OpenAI project's data
+controls; `store: false` does not mean zero retention.
+
+Exact quotes resolve to immutable transcript IDs, UTF-16 offsets, and existing
+utterance-level audio anchors. Unknown/ambiguous citations fail their section.
+Successful sections remain available when another section fails. Native disclosure
+controls support keyboard navigation; uncertain associations and missing answers
+are visible. Candidate questions and logistics remain in the full transcript.
+Grouping receipts and evidence are private and deleted with their review.
+
+Run `pnpm test` for deterministic coverage and
+`E2E_DEV=1 pnpm test:e2e e2e/threads.spec.ts` for keyboard acceptance. The opt-in
+`OPENAI_GROUPING_SMOKE=1 pnpm test tests/grouping.test.ts` makes one paid OpenAI
+request with synthetic text and writes its cost record to `/tmp` for importing
+into the shared pilot ledger. Real-interview grouping quality and deployed
+acceptance remain separate from these synthetic/local checks.

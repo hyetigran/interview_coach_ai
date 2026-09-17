@@ -1,3 +1,4 @@
+import { createGroupingModule } from './server/grouping';
 import { createRuntimeSpeakers } from './server/speakers';
 export { ContinuationWorkflow } from './server/continuation-workflow';
 import { createTranscriptionModule } from './server/transcription';
@@ -7,6 +8,6 @@ export { PreparationWorkflow } from './server/preparation-workflow';
 export default {
   fetch: () => new Response('Local job worker ready'),
   scheduled: (_controller: ScheduledController, env: CloudflareEnv, ctx: ExecutionContext) => {
-    ctx.waitUntil(Promise.all([createRuntimeProcessing(env).reconcile(), createMediaModule(env).cleanup(), createTranscriptionModule(env).cleanup(), createRuntimeSpeakers(env).reconcile()]));
+    ctx.waitUntil(Promise.all([createRuntimeProcessing(env).reconcile(), createMediaModule(env).cleanup(), createTranscriptionModule(env).cleanup(), createRuntimeSpeakers(env).reconcile(), createGroupingModule(env).cleanup()]));
   },
 };

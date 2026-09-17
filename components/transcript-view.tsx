@@ -1,4 +1,5 @@
 'use client';
+import { QuestionThreads } from './question-threads';
 import { SpeakerConfirmation } from './speaker-confirmation';
 import { useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
@@ -18,6 +19,7 @@ export function TranscriptView({ reviewId }: { reviewId: string }) {
     <h3 id="transcript-heading" className="font-semibold">Transcript</h3>
     <p className="text-sm text-muted-foreground">Machine transcription may contain errors. Speaker labels are unconfirmed. Confirm your voice before coaching. Confidence scores and word-level timing are not provided by this model.</p>
     <SpeakerConfirmation reviewId={reviewId} transcriptId={state.id} transcript={state.transcript} />
+    <QuestionThreads reviewId={reviewId} />
     <audio ref={audio} controls preload="none" src={`/api/reviews/${reviewId}/audio`} aria-label="Transcript passage playback" />
     {!utterances.length && <p>No speech was detected. Listen to your recording to check it.</p>}
     <ol className="space-y-4">{visible.map(utterance => <li key={utterance.id} className="rounded-md border p-3">
