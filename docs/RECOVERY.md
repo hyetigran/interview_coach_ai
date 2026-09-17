@@ -1,4 +1,4 @@
-# Local processing recovery
+# Processing recovery
 
 Recovery is persisted in D1 and R2. Closing a browser does not cancel a job. The review page reads the current stage and offers an explicit retry when its inputs, previous charges, attempt limit, and shared allowance permit one.
 
@@ -22,4 +22,13 @@ The local development command is `pnpm dev`. It reads `OPENAI_API_KEY` from the 
 
 The integration suite injects provider-response loss, database-publication failure, invalid output, changed dependencies, duplicate actions, dispatch failure, budget exhaustion, and deletion. `pnpm test:media` exercises real ffmpeg conversion and attempt-specific compression routes. Recovery browser tests exercise authenticated keyboard interaction and reload persistence using deterministic cases that require no provider calls.
 
-Remote smoke acceptance remains outstanding while local implementation is prioritized. These tests do not establish provider quality, recording permissions for a pilot corpus, or independent coaching-quality acceptance.
+The recovery browser suite can also target preview:
+
+```sh
+E2E_PREVIEW_ORIGIN=https://interview-coach-preview.hyetigran.workers.dev \
+pnpm exec playwright test e2e/stage-recovery.spec.ts e2e/recovery.spec.ts e2e/analysis-recovery.spec.ts
+```
+
+Preparation and saved-transcript publication cases seed owned audio, transcripts, a synthetic receipt, and an explicitly synthetic zero-cost ledger. They exercise real retry admission, Workflow or scheduled publication, keyboard interaction, duplicate actions, reload, and deletion. They assert retained identities and attempt counts with no additional ledger entries. They do not make new provider calls. Voice-confirmation, grouping, and coaching cases use their own provider-free synthetic fixtures; media/preparation presentation is mocked in those cases.
+
+These checks do not establish real-provider retry or billing reconciliation, the complete deployed failure/deletion matrix, provider quality, recording permissions for a pilot corpus, or independent coaching-quality acceptance. Ticket #13 remains open until its remaining acceptance evidence exists.
