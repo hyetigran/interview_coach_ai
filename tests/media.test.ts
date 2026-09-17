@@ -132,7 +132,7 @@ test('failed cleanup reports pending and does not starve later tombstones', asyn
   const r = await review('cleanup-owner'); const u = await upload('cleanup-owner', r.id, wav(100)); await media.complete('cleanup-owner', r.id, u.id);
   const bucket = await runtime.getR2Bucket('MEDIA') as unknown as R2Bucket;
   const failing = new Proxy(bucket, { get(target, prop) {
-    if (prop === 'delete') return async (key: string) => { if (key.includes(u.id) || key.startsWith('fail/')) throw new Error('Transient storage outage'); return target.delete(key); };
+    if (prop === 'delete') return async (key: string | string[]) => { if ((Array.isArray(key) ? key : [key]).some(value => value.includes(u.id) || value.startsWith('fail/'))) throw new Error('Transient storage outage'); return target.delete(key); };
     const value = Reflect.get(target, prop); return typeof value === 'function' ? value.bind(target) : value;
   } });
   const cleaner = createMediaModule({ DB: db, MEDIA: failing, AUTH_SECRET: 'cleanup-test' });

@@ -56,6 +56,17 @@ test('malformed paid output cannot publish; known usage is still settled', async
 test('validates timestamps and preserves exact text without inventing confidence or word timing', () => {
   const result = parseTranscript(provider,'v1','hash',2000).transcript;
   expect(result.utterances[1].text).toBe('Answer.'); expect(result.utterances[1]).not.toHaveProperty('confidence');
+  expect(() => parseTranscript({ ...provider, segments: [{ start: 2.5, end: 2.6, text: 'Outside' }] },'v1','hash',2000)).toThrow();
+  expect(() => parseTranscript({ ...provider, segments: [{ start: 1, end: 1.00001, text: 'Collapsed' }] },'v1','hash',2000)).toThrow();
   expect(() => parseTranscript({ ...provider, duration: 20 },'v1','hash',2000)).toThrow();
   expect(() => parseTranscript({ ...provider, segments: [{ start: -1, end: 2, text: 'bad' }] },'v1','hash',2000)).toThrow();
+});
+
+test('a completed provider receipt survives a failed billing settlement and is never resubmitted', async () => {
+  const env = await setup('transcript-overage'); let calls = 0;
+  const module = createTranscriptionModule(env, adapter(async () => { calls++; return Response.json({ ...provider, usage: { type: 'tokens', input_tokens: 3000000, output_tokens: 0 } }); }));
+  await module.run('transcript-overage'); await module.run('transcript-overage');
+  expect(calls).toBe(1); expect((await module.status('transcript-overage','transcript-overage'))?.state).toBe('reconciliation');
+  expect(await bucket.head('transcripts/transcript-overage/transcript-transcript-overage.provider.json')).not.toBeNull();
+  expect(await db.prepare("SELECT state FROM processing_budget WHERE id='transcript-transcript-overage'").first()).toEqual({ state: 'reserved' });
 });

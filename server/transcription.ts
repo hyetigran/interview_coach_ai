@@ -23,7 +23,7 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
     if (!env.OPENAI_API_KEY) { await db.prepare("UPDATE transcriptions SET state='configuration',error='Transcription is not configured. Add OPENAI_API_KEY to .env and restart the local app.' WHERE id=? AND state='queued'").bind(id).run(); return; }
     const claim = await db.prepare(`UPDATE transcriptions SET state='encoding',started_at=? WHERE id=? AND state='queued' AND ${active}`).bind(Date.now(), id).run();
     if (!claim.meta.changes) return;
-    let submitted = false;
+    let submitted = false; let receiptSaved = false;
     try {
       const preparation = await db.prepare("SELECT result FROM processing_jobs WHERE id=? AND state='ready'").bind(jobId).first<{ result: string }>();
       if (!preparation) throw new Error('Prepared audio is unavailable.');
@@ -42,20 +42,21 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
       const form = new FormData(); form.set('file', new Blob([bytes], { type: 'audio/mpeg' }), 'interview.mp3'); form.set('model', 'gpt-4o-transcribe-diarize'); form.set('response_format', 'diarized_json'); form.set('chunking_strategy', 'auto'); form.set('language', 'en');
       submitted = true;
       const response = await request('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, 'X-Client-Request-Id': id }, body: form, signal: AbortSignal.timeout(15 * 60000) });
-      await db.prepare('UPDATE transcriptions SET request_id=? WHERE id=?').bind(response.headers.get('x-request-id'), id).run();
       if (!response.ok) {
         if ([400, 401, 403, 413, 429].includes(response.status)) { await budget.settle(id, 0); submitted = false; }
         throw new Error(response.status === 429 ? 'OpenAI quota or rate limit reached. Check the API project billing.' : 'OpenAI could not complete transcription.');
       }
       const raw = await response.text(); if (new TextEncoder().encode(raw).length > 8000000) throw new Error('Transcript response exceeds supported limits.');
+      const receiptKey = `transcripts/${row.review_id}/${id}.provider.json`;
+      if (await live(id)) {
+        await env.MEDIA.put(receiptKey, JSON.stringify({ requestId: response.headers.get('x-request-id'), response: raw }), { httpMetadata: { contentType: 'application/json' } });
+        receiptSaved = true;
+        await db.prepare('UPDATE transcriptions SET request_id=? WHERE id=?').bind(response.headers.get('x-request-id'), id).run();
+        if (!await live(id)) await env.MEDIA.delete(receiptKey);
+      }
       const data = JSON.parse(raw);
       const usage = z.object({ type: z.literal('tokens'), input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() }).safeParse(data.usage);
       if (usage.success) await budget.settle(id, Math.ceil(usage.data.input_tokens * 2.5 + usage.data.output_tokens * 10));
-      const receiptKey = `transcripts/${row.review_id}/${id}.provider.json`;
-      if (await live(id)) {
-        await env.MEDIA.put(receiptKey, raw, { httpMetadata: { contentType: 'application/json' } });
-        if (!await live(id)) { await env.MEDIA.delete(receiptKey); return; }
-      }
       const { transcript } = parseTranscript(data, id, audio.sha256, audio.durationMs);
       const current = await live(id); if (!current || current.state !== 'submitting') return;
       const resultKey = `transcripts/${row.review_id}/${id}.json`;
@@ -63,7 +64,7 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
       const published = await db.prepare(`UPDATE transcriptions SET state='ready',result_key=?,finished_at=?,error=NULL WHERE id=? AND state='submitting' AND ${active}`).bind(resultKey, Date.now(), id).run();
       if (!published.meta.changes) await env.MEDIA.delete(resultKey);
     } catch {
-      await db.prepare(`UPDATE transcriptions SET state=?,error=?,finished_at=? WHERE id=? AND state IN ('encoding','submitting') AND ${active}`).bind(submitted ? 'unknown' : 'failed', submitted ? 'The paid transcription outcome needs reconciliation. It will not be submitted again automatically.' : 'Transcription could not start. Check local services, API access, and billing.', Date.now(), id).run();
+      await db.prepare(`UPDATE transcriptions SET state=?,error=?,finished_at=? WHERE id=? AND state IN ('encoding','submitting') AND ${active}`).bind(receiptSaved ? 'reconciliation' : submitted ? 'unknown' : 'failed', receiptSaved ? 'OpenAI returned a result, which is safely stored. Its format or billing needs reconciliation before publication.' : submitted ? 'The paid transcription outcome needs reconciliation. It will not be submitted again automatically.' : 'Transcription could not start. Check local services, API access, and billing.', Date.now(), id).run();
     }
   }
   async function cleanup() {

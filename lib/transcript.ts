@@ -9,8 +9,10 @@ export function parseTranscript(input: unknown, id: string, audioSha256: string,
   let previousEnd = 0;
   const utterances = data.segments.map((segment, index) => {
     if (segment.end <= segment.start || segment.end * 1000 > durationMs + 1000 || (index && segment.start < data.segments[index - 1].start)) throw new Error('Transcript timestamps are invalid.');
+    const startMs = Math.round(segment.start * 1000), endMs = Math.min(durationMs, Math.round(segment.end * 1000));
+    if (startMs < 0 || startMs >= endMs || endMs > durationMs) throw new Error('Normalized transcript timestamps are invalid.');
     const overlap = previousEnd > segment.start || Boolean(data.segments[index + 1] && data.segments[index + 1].start < segment.end); previousEnd = Math.max(previousEnd, segment.end);
-    return { id: `${id}:${index}`, text: segment.text, speaker: segment.speaker ?? null, startMs: Math.round(segment.start * 1000), endMs: Math.min(durationMs, Math.round(segment.end * 1000)), overlap };
+    return { id: `${id}:${index}`, text: segment.text, speaker: segment.speaker ?? null, startMs, endMs, overlap };
   });
   return { transcript: transcriptSchema.parse({ version: 1, model: 'gpt-4o-transcribe-diarize', audioSha256, durationMs, utterances }), usage: data.usage };
 }
