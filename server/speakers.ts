@@ -18,7 +18,7 @@ export function createSpeakerModule(env: Environment, dispatch?: (id: string) =>
     const object = await env.MEDIA.get(transcript.result_key); if (!object) throw new SpeakerError(409,'The transcript is unavailable.');
     const document = transcriptSchema.parse(await object.json()); const labels = new Set(document.utterances.map(utterance => utterance.speaker).filter(Boolean));
     if (speakers.some(speaker => !labels.has(speaker))) throw new SpeakerError(400,'Select only speaker labels present in this transcript.');
-    await db.prepare("INSERT OR IGNORE INTO speaker_confirmations(id,review_id,owner_id,transcript_id,speakers,revision,confirmed_at) SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM reviews JOIN transcriptions ON reviews.id=transcriptions.review_id WHERE reviews.id=? AND reviews.owner_id=? AND reviews.lifecycle='active' AND reviews.input_revision=? AND transcriptions.id=? AND transcriptions.state='ready')").bind(value.actionId,review,owner,value.transcriptId,JSON.stringify(speakers),transcript.revision,Date.now(),review,owner,transcript.revision,value.transcriptId).run();
+    await db.prepare("INSERT OR IGNORE INTO speaker_confirmations(id,review_id,owner_id,transcript_id,speakers,revision,confirmed_at) SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM reviews JOIN transcriptions ON reviews.id=transcriptions.review_id WHERE reviews.id=? AND reviews.owner_id=? AND reviews.lifecycle='active' AND reviews.input_revision=? AND transcriptions.id=? AND transcriptions.state='ready' AND transcriptions.revision=reviews.input_revision)").bind(value.actionId,review,owner,value.transcriptId,JSON.stringify(speakers),transcript.revision,Date.now(),review,owner,transcript.revision,value.transcriptId).run();
     const saved = await status(owner,review);
     if (!saved || saved.transcriptId !== value.transcriptId || JSON.stringify(saved.speakers) !== JSON.stringify(speakers)) throw new SpeakerError(409,'A different confirmation was saved or the transcript changed. Reload to see the current selection.');
     await reconcile(); return await status(owner,review);
@@ -39,9 +39,8 @@ export function createSpeakerModule(env: Environment, dispatch?: (id: string) =>
   async function resume(id: string) {
     // Only persisted, current confirmation can authorize downstream work. An event
     // payload or elapsed waiting time cannot create candidate attribution.
-    const row = await db.prepare(`SELECT * FROM speaker_confirmations WHERE id=? AND state IN ('running','confirmed') AND deadline>? AND ${active}`).bind(id,Date.now()).first<Row>();
+    const row = await db.prepare(`UPDATE speaker_confirmations SET state='confirmed' WHERE id=? AND (state='confirmed' OR (state='running' AND deadline>?)) AND ${active} RETURNING *`).bind(id,Date.now()).first<Row>();
     if (!row) return null;
-    await db.prepare(`UPDATE speaker_confirmations SET state='confirmed' WHERE id=? AND state='running' AND ${active}`).bind(id).run();
     return { reviewId: row.review_id, transcriptId: row.transcript_id, speakers: JSON.parse(row.speakers) as string[], revision: row.revision };
   }
   return { status, confirm, reconcile, resume };

@@ -50,3 +50,24 @@ test('duplicate confirmations cannot change attribution or create another contin
   await expect(module.confirm('speaker-duplicate','speaker-duplicate',{...input,speakers:['B']})).rejects.toThrow();
   expect((await db.prepare("SELECT COUNT(*) AS count FROM speaker_confirmations WHERE review_id='speaker-duplicate'").first<{count:number}>())?.count).toBe(1);
 });
+test('a newer ready transcript can receive its own confirmation after invalidation', async () => {
+  const input = await setup('speaker-replacement'); const module = createSpeakerModule({DB:db,MEDIA:bucket},async()=>{});
+  await module.confirm('speaker-replacement','speaker-replacement',input);
+  await db.prepare("UPDATE reviews SET input_revision=2 WHERE id='speaker-replacement'").run(); await module.reconcile();
+  await db.prepare("INSERT INTO transcriptions(id,review_id,owner_id,job_id,revision,state,result_key) VALUES('replacement-t','speaker-replacement','speaker-replacement','replacement-job',2,'ready','document-speaker-replacement')").run();
+  const current = await module.confirm('speaker-replacement','speaker-replacement',{ actionId:crypto.randomUUID(),transcriptId:'replacement-t',speakers:['B'] });
+  expect(current?.speakers).toEqual(['B']); expect(await module.resume(input.actionId)).toBeNull();
+});
+test('invalidation immediately before the atomic resume cannot return attribution', async () => {
+  const input = await setup('speaker-race'); const module = createSpeakerModule({DB:db,MEDIA:bucket},async()=>{});
+  await module.confirm('speaker-race','speaker-race',input);
+  const invalidating = new Proxy(db,{ get(target,property) {
+    if(property==='prepare') return (sql:string) => {
+      const statement = target.prepare(sql);
+      if(!sql.startsWith("UPDATE speaker_confirmations SET state='confirmed'")) return statement;
+      return { bind: (...values: unknown[]) => { const bound = statement.bind(...values); return { first: async () => { await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id='speaker-race'").run(); return bound.first(); } }; } };
+    };
+    const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;
+  }});
+  expect(await createSpeakerModule({DB:invalidating,MEDIA:bucket}).resume(input.actionId)).toBeNull();
+});
