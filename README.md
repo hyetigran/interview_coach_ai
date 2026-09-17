@@ -26,7 +26,7 @@ Local authentication secrets live in the ignored `.dev.vars` file. Never commit 
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm build:worker
+pnpm build
 pnpm exec playwright install chromium
 pnpm test:e2e
 ```
@@ -40,7 +40,7 @@ Preview and production use distinct Workers and D1 databases. The repository con
 1. Authenticate using `wrangler login` or a scoped Cloudflare API token.
 2. Create the preview and production D1 databases and record each returned ID under its matching environment binding.
 3. Set each environment's `APP_ORIGIN` to its exact HTTPS application origin, and set a distinct `AUTH_SECRET` with `wrangler secret put AUTH_SECRET --env <environment>`.
-4. Connect Workers Builds to this repository with locked dependency installation and `pnpm lint && pnpm typecheck && pnpm test && pnpm build:worker` as the checked build sequence. Serialize production deployments.
+4. Connect Workers Builds to this repository with locked dependency installation and `pnpm lint && pnpm typecheck && pnpm test && pnpm build` as the checked build sequence. Serialize production deployments.
 5. Apply reviewed migrations to the selected environment before publishing the compatible Worker: `pnpm exec wrangler d1 migrations apply DB --remote --env <environment>`.
 6. Deploy with `pnpm exec opennextjs-cloudflare deploy --env <environment>` and run the create/reopen/isolation/delete smoke checks against that deployed origin.
 
@@ -68,3 +68,5 @@ Workers Builds is not yet connected. The CLI OAuth credential receives HTTP 403 
 Require a successful connected staging build before treating the selected deployment path as complete. Production app deployment remains a separate release action.
 
 GitHub checks run on feature PRs and pushes to both `staging` and `main`. Set the preview Worker’s build branch to `staging`; do not connect its preview database to the production Worker.
+
+`pnpm build` produces the complete OpenNext Worker bundle, including `.open-next/.build/open-next.config.edge.mjs`. `pnpm build:next` runs only the underlying Next.js compiler and is not sufficient for Cloudflare deployment. OpenNext explicitly invokes `build:next` to avoid recursively invoking itself.

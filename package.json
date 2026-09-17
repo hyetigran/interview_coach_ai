@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 --port 3000",
-    "build": "next build",
+    "build": "opennextjs-cloudflare build",
     "start": "next start",
     "lint": "oxlint",
     "typecheck": "next typegen && tsc --noEmit",
@@ -15,7 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "setup:local": "node scripts/setup-local.mjs",
-    "invite": "node scripts/invite.mjs"
+    "invite": "node scripts/invite.mjs",
+    "build:next": "next build"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
