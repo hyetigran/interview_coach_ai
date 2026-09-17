@@ -1,3 +1,4 @@
+import {accountSlotAvailable} from './account-slot';
 import {z} from 'zod';
 import {RecoveryError} from './recovery';
 import {transcriptionAttemptId,TRANSCRIPTION_RESERVATION} from '../lib/transcription-attempt';
@@ -7,13 +8,27 @@ type Dispatch=(id:string,jobId:string,attempt:number)=>Promise<void>;
 export function createTranscriptionRetry(env:Environment,dispatch?:Dispatch) {
  const db=env.DB;
  async function retry(owner:string,review:string,input:unknown) {
-  const value=z.object({actionId:z.uuid(),transcriptId:z.string().min(1).max(100),attempt:z.number().int().min(0).max(2)}).strict().parse(input);
+  const value=z.object({actionId:z.uuid(),transcriptId:z.string().min(1).max(100),attempt:z.number().int().min(0).max(2),publicationCycle:z.number().int().min(0).max(2).optional()}).strict().parse(input);
   const current=await db.prepare("SELECT input_revision,coaching_revision FROM reviews WHERE id=? AND owner_id=? AND lifecycle='active'").bind(review,owner).first<{input_revision:number;coaching_revision:number}>();
   if(!current)throw new RecoveryError(404,'Review not found.');
   const prior=await db.prepare('SELECT * FROM recovery_requests WHERE id=?').bind(value.actionId).first<{owner_id:string;review_id:string;stage:string;target_id:string;target_attempt:number;state:string}>();
   if(prior){
    if(prior.owner_id!==owner||prior.review_id!==review||prior.stage!=='transcription'||prior.target_id!==value.transcriptId||prior.target_attempt!==value.attempt)throw new RecoveryError(409,'This retry action belongs to different work.');
    if(prior.state==='applied'){await reconcile();return {accepted:true};}
+  }
+  const receipt=await env.MEDIA.head(`transcripts/${review}/${transcriptionAttemptId(value.transcriptId,value.attempt)}.provider.json`);
+  if(receipt){
+   // A saved provider outcome must be published under its original paid identity.
+   // Explicit publication gets a new bounded window, never a new reservation.
+   const eligible=`SELECT t.id FROM transcriptions t JOIN reviews r ON r.id=t.review_id WHERE t.id=? AND t.owner_id=? AND t.review_id=? AND t.paid_attempt=? AND t.publication_retries=? AND t.publication_retries<2 AND t.state='reconciliation_exhausted' AND r.lifecycle='active' AND r.input_revision=t.revision`;
+   const args=[value.transcriptId,owner,review,value.attempt,value.publicationCycle??0];
+   await db.batch([
+    db.prepare(`INSERT OR IGNORE INTO recovery_requests(id,review_id,owner_id,stage,target_id,target_attempt,input_revision,context_revision,created_at,plan) SELECT ?,?,?,'transcription',?,?,?,?,?,? WHERE EXISTS(${eligible})`).bind(value.actionId,review,owner,value.transcriptId,value.attempt,current.input_revision,current.coaching_revision,Date.now(),JSON.stringify({publication:true,cycle:value.publicationCycle??0}),...args),
+    db.prepare(`UPDATE transcriptions SET state='reconciliation',publication_retries=publication_retries+1,publication_attempts=0,publication_deadline=0,publication_checked_at=0,recovery_action_id=?,error='Retrying publication of the saved transcription without another provider request.' WHERE id IN (${eligible}) AND EXISTS(SELECT 1 FROM recovery_requests WHERE id=? AND owner_id=? AND review_id=? AND stage='transcription' AND target_id=? AND target_attempt=? AND state='pending')`).bind(value.actionId,...args,value.actionId,owner,review,value.transcriptId,value.attempt),
+    db.prepare("UPDATE recovery_requests SET state='applied',dispatch_state='sent' WHERE id=? AND owner_id=? AND review_id=? AND stage='transcription' AND EXISTS(SELECT 1 FROM transcriptions WHERE id=? AND recovery_action_id=?)").bind(value.actionId,owner,review,value.transcriptId,value.actionId),
+   ]);
+   if(!await db.prepare("SELECT id FROM recovery_requests WHERE id=? AND owner_id=? AND review_id=? AND stage='transcription' AND target_id=? AND target_attempt=? AND state='applied'").bind(value.actionId,owner,review,value.transcriptId,value.attempt).first())throw new RecoveryError(409,'Saved transcription publication is pending, changed, or reached its three-window limit. No new paid request was made.');
+   return {accepted:true};
   }
   if(!env.OPENAI_API_KEY)throw new RecoveryError(409,'Configure transcription access before retrying.');
   const row=await db.prepare("SELECT p.result FROM transcriptions t JOIN processing_jobs p ON p.id=t.job_id WHERE t.id=? AND t.owner_id=? AND t.review_id=? AND t.revision=? AND p.state='ready'").bind(value.transcriptId,owner,review,current.input_revision).first<{result:string}>();
@@ -28,11 +43,7 @@ export function createTranscriptionRetry(env:Environment,dispatch?:Dispatch) {
    AND t.state IN ('failed','configuration','budget_blocked','reconciliation_exhausted')
    AND r.lifecycle='active' AND r.input_revision=t.revision
    AND NOT EXISTS(SELECT 1 FROM processing_budget WHERE id=CASE WHEN t.paid_attempt=0 THEN t.id ELSE t.id||'-attempt-'||t.paid_attempt END AND state='reserved')
-   AND NOT EXISTS(SELECT 1 FROM processing_jobs WHERE owner_id=t.owner_id AND (state='running' OR dispatch_state='cancel_pending'))
-   AND NOT EXISTS(SELECT 1 FROM transcriptions b WHERE b.owner_id=t.owner_id AND b.state IN ('queued','encoding','submitting','publishing'))
-   AND NOT EXISTS(SELECT 1 FROM speaker_confirmations WHERE owner_id=t.owner_id AND state IN ('queued','running'))
-   AND NOT EXISTS(SELECT 1 FROM grouping_runs WHERE owner_id=t.owner_id AND state='running')
-   AND NOT EXISTS(SELECT 1 FROM coaching_runs WHERE owner_id=t.owner_id AND state IN ('queued','running'))`;
+   AND ${accountSlotAvailable('t.owner_id',undefined,"t.id||'-attempt-'||(t.paid_attempt+1)")}`;
   const args=[value.transcriptId,owner,review,value.attempt];
   const pending="EXISTS(SELECT 1 FROM recovery_requests WHERE id=? AND state='pending' AND stage='transcription' AND target_id=? AND target_attempt=?)";
   await db.batch([

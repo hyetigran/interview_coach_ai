@@ -153,3 +153,32 @@ test('saved receipt input allows reuse of completed sections from before retry m
  const retry=createGroupingRetry(env),plan=(await retry.plan(review,review))!,input={actionId:crypto.randomUUID(),runId:actionId,version:plan.version};await retry.retry(review,review,input);
  const work=(await retry.work(input.actionId))!;for(const step of work.steps)await grouping.runChunk(work.runId,step.ordinal,step.attempt);await grouping.finish(actionId);expect(calls).toBe(3);
 });
+
+test('explicit grouping publication recovery retains its paid identity after storage exhaustion',async()=>{
+ const review='group-publication-explicit',{actionId,speakers}=await setup(review);let fail=true,calls=0;
+ const failingDB=new Proxy(db,{get(target,property){if(property==='prepare')return(sql:string)=>{const statement=target.prepare(sql);if(!sql.startsWith("UPDATE grouping_chunks SET state='ready',result=?"))return statement;return{bind:(...values:unknown[])=>{const bound=statement.bind(...values);return{run:async()=>{if(fail)throw new Error('Database publication unavailable');return bound.run();}};}};};const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;}});
+ const module=createGroupingModule({DB:failingDB,MEDIA:bucket,OPENAI_API_KEY:'test'},async()=>{calls++;return response();});await module.begin(actionId);await speakers.resume(actionId);await module.runChunk(actionId,0);await module.finish(actionId);
+ for(let i=0;i<4;i++)await module.recoverReceipt(actionId,0);
+ const retry=createGroupingRetry({DB:db,MEDIA:bucket}),plan=(await retry.plan(review,review))!;
+ expect(plan).toMatchObject({canRetry:true,maximumUnits:0,publication:{cycle:0,attempt:0}});
+ const input={actionId:crypto.randomUUID(),runId:actionId,version:plan.version,publication:plan.publication};
+ await Promise.all([retry.retry(review,review,input),retry.retry(review,review,input)]);
+ fail=false;await module.reconcileReceipts();expect((await module.status(review,review))?.state).toBe('ready');expect(calls).toBe(1);
+ expect(await db.prepare('SELECT attempt,publication_retries FROM grouping_chunks WHERE run_id=?').bind(actionId).first()).toEqual({attempt:0,publication_retries:1});
+ expect(await db.prepare('SELECT id FROM processing_budget WHERE id=?').bind(plan.publication!.chunkId+'-attempt-1').first()).toBeNull();
+ await retry.retry(review,review,input);expect(calls).toBe(1);
+});
+
+test('saved grouping publication is finite even when storage remains unavailable',async()=>{
+ const review='group-publication-bound',{actionId,speakers}=await setup(review),module=createGroupingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async()=>response({invalid:true}));
+ await module.begin(actionId);await speakers.resume(actionId);await module.runChunk(actionId,0);await module.finish(actionId);
+ const retry=createGroupingRetry({DB:db,MEDIA:bucket});
+ for(let cycle=0;cycle<3;cycle++){
+  for(let i=0;i<4;i++)await module.recoverReceipt(actionId,0);
+  const plan=(await retry.plan(review,review))!;expect(plan.maximumUnits).toBe(0);
+  const input={actionId:crypto.randomUUID(),runId:actionId,version:plan.version,publication:plan.publication};
+  if(cycle<2)await retry.retry(review,review,input);
+  else {expect(plan.canRetry).toBe(false);await expect(retry.retry(review,review,input)).rejects.toThrow('three-window limit');}
+ }
+ expect(await db.prepare('SELECT attempt,publication_retries FROM grouping_chunks WHERE run_id=?').bind(actionId).first()).toEqual({attempt:0,publication_retries:2});
+});

@@ -104,3 +104,17 @@ test('expired reanalysis before job creation retries with a fresh identity and a
  await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(review).run();
  await expect(module.request(review,review,retry)).rejects.toThrow();
 });
+
+test('changed context waits for a historical provider outcome to reconcile before dispatch',async()=>{
+ const review='context-unknown-history',group=await ready(review),env={DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'};
+ const coaching=createCoachingModule(env,async()=>{throw new Error('Provider reply lost');});const [job]=await coaching.begin(group);await coaching.run(job);await coaching.finish(group);
+ const context=createContextModule(db),old=await context.get(review,review);await context.save(review,review,{revision:1,context:{...old.context,role:'Staff engineer'}});
+ let dispatches=0;const reanalysis=createReanalysisModule(env,async()=>{dispatches++;});const action={actionId:crypto.randomUUID(),contextRevision:2};await reanalysis.request(review,review,action);
+ expect(dispatches).toBe(0);expect(await db.prepare('SELECT state FROM coaching_runs WHERE id=?').bind(action.actionId).first()).toEqual({state:'queued'});
+ await bucket.put(`coaching/${review}/${job}-draft.provider.json`,JSON.stringify({response:JSON.stringify({usage:{input_tokens:-1}})}));
+ await reanalysis.reconcile();expect(dispatches).toBe(0);expect(await db.prepare('SELECT state FROM processing_budget WHERE id=?').bind(job+'-draft').first()).toEqual({state:'reserved'});
+ await bucket.put(`coaching/${review}/${job}-draft.provider.json`,JSON.stringify({response:JSON.stringify({usage:{input_tokens:100,output_tokens:100,input_tokens_details:{cached_tokens:0}}})}));
+ await reanalysis.reconcile();expect(dispatches).toBe(1);
+ expect(await db.prepare('SELECT state FROM processing_budget WHERE id=?').bind(job+'-draft').first()).toEqual({state:'settled'});
+ expect(await db.prepare('SELECT state,result FROM coaching_jobs WHERE id=?').bind(job).first()).toEqual({state:'outdated',result:null});
+});

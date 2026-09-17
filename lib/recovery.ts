@@ -10,7 +10,7 @@ export function recoveryPlan(artifacts:RecoveryArtifact[],availableUnits:number)
   if(!artifact.current)return step('blocked','The inputs changed. Load the current review before retrying.');
   if(artifact.state==='ready'||artifact.state==='confirmed')return step('reuse','Reuse the completed stage.');
   if(busy.has(artifact.state))return step('wait','This stage already has persisted work in progress.');
-  if(artifact.receipt==='complete'&&artifact.state!=='reconciliation_exhausted')return step('publish','Publish the saved provider result without another paid request.');
+  if(artifact.receipt==='complete')return step('publish','Publish the saved provider result without another paid request.');
   if(artifact.billing==='reserved'||artifact.state==='unknown')return step('blocked','The provider outcome or charge is unresolved. Keep its reservation until reconciliation.');
   if(artifact.state==='withheld')return step('blocked','The support check rejected this advice. Review its evidence before requesting new coaching.');
   if(artifact.attempts>=3)return step('blocked','This stage has reached its three-attempt limit.');

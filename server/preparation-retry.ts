@@ -1,3 +1,4 @@
+import {accountSlotAvailable} from './account-slot';
 import {z} from 'zod';
 import {RecoveryError} from './recovery';
 import {createRuntimeProcessing} from './processing';
@@ -22,11 +23,7 @@ export function createPreparationRetry(env:Environment,processing=createRuntimeP
    AND p.state='failed' AND p.failure_kind='retryable' AND p.dispatch_state='cancelled'
    AND r.lifecycle='active' AND r.input_revision=p.revision
    AND (u.state='admitted' OR (u.state='validating' AND u.expires_at>?))
-   AND NOT EXISTS(SELECT 1 FROM processing_jobs b WHERE b.owner_id=p.owner_id AND (b.state IN ('queued','running') OR b.dispatch_state='cancel_pending'))
-   AND NOT EXISTS(SELECT 1 FROM transcriptions WHERE owner_id=p.owner_id AND state IN ('queued','encoding','submitting','publishing'))
-   AND NOT EXISTS(SELECT 1 FROM speaker_confirmations WHERE owner_id=p.owner_id AND state IN ('queued','running'))
-   AND NOT EXISTS(SELECT 1 FROM grouping_runs WHERE owner_id=p.owner_id AND state='running')
-   AND NOT EXISTS(SELECT 1 FROM coaching_runs WHERE owner_id=p.owner_id AND state IN ('queued','running'))`;
+   AND ${accountSlotAvailable('p.owner_id')}`;
   const args=[value.jobId,owner,review,value.attempt,Date.now()];
   await db.batch([
    db.prepare(`INSERT OR IGNORE INTO recovery_requests(id,review_id,owner_id,stage,target_id,target_attempt,input_revision,context_revision,created_at) SELECT ?,?,?,'preparation',?,?,?,?,? WHERE EXISTS(${eligible})`).bind(value.actionId,review,owner,value.jobId,value.attempt,current.input_revision,current.coaching_revision,Date.now(),...args),

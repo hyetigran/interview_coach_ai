@@ -1,3 +1,5 @@
+import {accountSlotAvailable} from './account-slot';
+import {reconcileProviderBilling} from './historical-billing';
 import {coachingAttemptId} from '../lib/coaching-attempt';
 import {coachingDependencyKey} from '../lib/transcript-corrections';
 import {contextSnapshot} from './review-context';
@@ -99,7 +101,7 @@ export function createCoachingModule(env:Environment,request:typeof fetch=fetch)
    return;
   }
   const now=Date.now();
-  const claim=await db.prepare(`UPDATE coaching_jobs SET state='publishing',started_at=?,publication_attempts=publication_attempts+1,publication_deadline=CASE WHEN publication_deadline=0 THEN ? ELSE publication_deadline END WHERE id=? AND attempt=? AND state IN ('failed','unknown','reconciliation') AND publication_attempts<3 AND (publication_deadline=0 OR publication_deadline>?) AND EXISTS(SELECT 1 FROM coaching_runs WHERE id=? AND ${active}) RETURNING publication_attempts`).bind(now,now+15*60000,id,job.attempt,now,current.id).first<{publication_attempts:number}>();if(!claim)return;
+  const claim=await db.prepare(`UPDATE coaching_jobs SET state='publishing',started_at=?,publication_attempts=publication_attempts+1,publication_deadline=CASE WHEN publication_deadline=0 THEN ? ELSE publication_deadline END WHERE id=? AND attempt=? AND state IN ('failed','unknown','reconciliation') AND publication_attempts<3 AND (publication_deadline=0 OR publication_deadline>?) AND EXISTS(SELECT 1 FROM coaching_runs WHERE id=? AND ${active} AND ${accountSlotAvailable('coaching_runs.owner_id','coaching_runs.review_id')}) RETURNING publication_attempts`).bind(now,now+15*60000,id,job.attempt,now,current.id).first<{publication_attempts:number}>();if(!claim)return;
   try {
    const receipt=z.object({response:z.string().max(2000000)});
    const draftData=JSON.parse(receipt.parse(await draftReceipt.json()).response),verificationData=JSON.parse(receipt.parse(await verificationReceipt.json()).response);
@@ -114,6 +116,7 @@ export function createCoachingModule(env:Environment,request:typeof fetch=fetch)
   }
  }
  async function reconcileReceipts() {
+    await reconcileProviderBilling(env);
   await cleanup();
   const rows=(await db.prepare(`SELECT coaching_jobs.id FROM coaching_jobs JOIN coaching_runs ON coaching_runs.id=coaching_jobs.run_id WHERE coaching_jobs.state IN ('failed','unknown','reconciliation') AND coaching_jobs.publication_attempts<3 AND (coaching_jobs.publication_deadline=0 OR coaching_jobs.publication_deadline>?) AND ${active} ORDER BY coaching_jobs.publication_checked_at,coaching_jobs.id LIMIT 10`).bind(Date.now()).all<{id:string}>()).results;
   for(const row of rows){try{await recoverReceipts(row.id);}catch{/* Storage failure does not prevent recovery of other jobs. */}}

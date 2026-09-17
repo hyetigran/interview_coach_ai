@@ -94,6 +94,14 @@ test('receipt recovery never publishes an unsupported draft or invents a missing
 test('saved coaching recovery exhausts invalid receipts and fences changed context',async()=>{
  const review='coach-recovery-invalid',action=await ready(review);let calls=0;const module=createCoachingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async(_url,init)=>{calls++;return calls===2?response({invalid:true}):coachResponse(init);});const [job]=await module.begin(action);await module.run(job);await module.finish(action);for(let n=0;n<6;n++)await module.recoverReceipts(job);
  expect(calls).toBe(2);expect(await db.prepare('SELECT state,publication_attempts FROM coaching_jobs WHERE id=?').bind(job).first()).toEqual({state:'reconciliation_exhausted',publication_attempts:3});
+ const publicationRetry=createCoachingRetry({DB:db,MEDIA:bucket});
+ for(let cycle=0;cycle<2;cycle++){
+  await publicationRetry.retry(review,review,{actionId:crypto.randomUUID(),jobId:job,attempt:0,publicationCycle:cycle});
+  for(let i=0;i<4;i++)await module.recoverReceipts(job);
+ }
+ expect((await publicationRetry.plan(review,review,job))?.canRetry).toBe(false);
+ await expect(publicationRetry.retry(review,review,{actionId:crypto.randomUUID(),jobId:job,attempt:0,publicationCycle:2})).rejects.toThrow('three-window limit');expect(calls).toBe(2);
+
  const other='coach-recovery-context',otherAction=await ready(other),otherModule=createCoachingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async(_url,init)=>coachResponse(init));const [otherJob]=await otherModule.begin(otherAction);await otherModule.run(otherJob);await db.prepare("UPDATE coaching_jobs SET state='failed',result=NULL WHERE id=?").bind(otherJob).run();await db.prepare('UPDATE reviews SET coaching_revision=2 WHERE id=?').bind(other).run();await otherModule.recoverReceipts(otherJob);await otherModule.cleanup();expect(await db.prepare('SELECT state,result,publication_attempts FROM coaching_jobs WHERE id=?').bind(otherJob).first()).toEqual({state:'outdated',result:null,publication_attempts:0});
 });
 test('grouping output changes fence in-flight coaching and retain earlier completed advice as history',async()=>{
@@ -167,4 +175,19 @@ test('coaching retry dispatch is bounded and exhausted paid attempts cannot be r
  await db.prepare('UPDATE coaching_runs SET deadline=0 WHERE id=?').bind(action).run();await retry.reconcile();
  await db.prepare('UPDATE coaching_jobs SET attempt=2 WHERE id=?').bind(job).run();expect((await retry.plan(review,review,job))?.canRetry).toBe(false);
  await expect(retry.retry(review,review,{...input,actionId:crypto.randomUUID(),attempt:2})).rejects.toThrow('three-attempt');
+});
+
+test('explicit recovery republishes exhausted coaching receipts without repeating either paid step',async()=>{
+ const review='coach-publication-explicit',action=await ready(review);let fail=true,calls=0;
+ const failingDB=new Proxy(db,{get(target,property){if(property==='prepare')return(sql:string)=>{const statement=target.prepare(sql);if(!sql.startsWith("UPDATE coaching_jobs SET state='ready',result=")&&!sql.startsWith('UPDATE coaching_jobs SET state=?,result='))return statement;return{bind:(...values:unknown[])=>{const bound=statement.bind(...values);return{run:async()=>{if(fail)throw new Error('Publication unavailable');return bound.run();}};}};};const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;}});
+ const module=createCoachingModule({DB:failingDB,MEDIA:bucket,OPENAI_API_KEY:'test'},async(_url,init)=>{calls++;return coachResponse(init);});
+ const [job]=await module.begin(action);await module.run(job);await module.finish(action);for(let i=0;i<4;i++)await module.recoverReceipts(job);
+ expect((await module.status(review,review))?.jobs[0].state).toBe('reconciliation_exhausted');
+ const retry=createCoachingRetry({DB:db,MEDIA:bucket});
+ expect(await retry.plan(review,review,job)).toMatchObject({canRetry:true,maximumUnits:0,publicationCycle:0});
+ const input={actionId:crypto.randomUUID(),jobId:job,attempt:0};await Promise.all([retry.retry(review,review,input),retry.retry(review,review,input)]);
+ fail=false;await module.reconcileReceipts();expect((await module.status(review,review))?.jobs[0].state).toBe('ready');expect(calls).toBe(2);
+ expect(await db.prepare('SELECT attempt,publication_retries FROM coaching_jobs WHERE id=?').bind(job).first()).toEqual({attempt:0,publication_retries:1});
+ expect(await db.prepare('SELECT id FROM processing_budget WHERE id=?').bind(job+'-attempt-1-verify').first()).toBeNull();
+ await retry.retry(review,review,input);expect((await module.status(review,review))?.jobs[0].state).toBe('ready');
 });

@@ -5,13 +5,13 @@ import {useRef} from 'react';
 import {api} from '@/lib/api';
 import type {CoachingResult} from '@/lib/coaching';
 import {Button} from './ui/button';
-type Retry={jobId:string;attempt:number;canRetry:boolean;reason:string;maximumUnits:number;reuseDraft:boolean};
+type Retry={publicationCycle?:number;jobId:string;attempt:number;canRetry:boolean;reason:string;maximumUnits:number;reuseDraft:boolean};
 type State={state:string;error?:string|null;jobs:{retry?:Retry|null;id:string;threadId:string;state:string;error:string|null;result:CoachingResult|null}[]}|null;
 export function CoachingCard({reviewId,threadId}:{reviewId:string;threadId:string}) {
  const client=useQueryClient(),action=useRef<{target:string;id:string}|null>(null);
  const retry=useMutation({mutationFn:(plan:Retry)=>{
-  const target=plan.jobId+':'+plan.attempt;if(action.current?.target!==target)action.current={target,id:crypto.randomUUID()};
-  return api(`/api/reviews/${reviewId}/coaching`,{method:'PATCH',body:JSON.stringify({actionId:action.current.id,jobId:plan.jobId,attempt:plan.attempt})});
+  const target=plan.jobId+':'+plan.attempt+':'+(plan.publicationCycle??'paid');if(action.current?.target!==target)action.current={target,id:crypto.randomUUID()};
+  return api(`/api/reviews/${reviewId}/coaching`,{method:'PATCH',body:JSON.stringify({actionId:action.current.id,jobId:plan.jobId,attempt:plan.attempt,publicationCycle:plan.publicationCycle})});
  },onSettled:()=>client.invalidateQueries({queryKey:['coaching',reviewId]})});
  const audio=useRef<HTMLAudioElement>(null);
  const query=useQuery({queryKey:['coaching',reviewId],queryFn:()=>api<State>(`/api/reviews/${reviewId}/coaching`),refetchInterval:q=>!q.state.data||['queued','running'].includes(q.state.data.state)?3000:false});
@@ -19,7 +19,7 @@ export function CoachingCard({reviewId,threadId}:{reviewId:string;threadId:strin
  const state=query.data;if(!state)return <p role="status">Coaching will follow question grouping.</p>;
  const job=state.jobs.find(j=>j.threadId===threadId);if(!job)return <p role="status">{['queued','running'].includes(state.state)?'Coaching is waiting for its processing slot or preparing this thread.':state.error??'No coaching result is available for this thread.'}</p>;
  if(['queued','preparing','generating','verifying','publishing'].includes(job.state))return <p role="status">Preparing and checking supported coaching… You can leave and return.</p>;
- if(!job.result)return <div className="space-y-2"><p role="status">{job.error??'Coaching is unavailable for this thread. The original evidence remains accessible.'}</p>{job.retry&&<p>{job.retry.reason}</p>}{job.retry?.canRetry&&<><p>This retry reserves ${(job.retry.maximumUnits/1000000).toFixed(2)} from the shared allowance.</p><Button disabled={retry.isPending} onClick={()=>retry.mutate(job.retry!)}>{retry.isPending?'Queuing retry…':job.retry.reuseDraft?'Retry support check':'Retry coaching'}</Button></>}{retry.error&&<p role="alert">{retry.error.message}</p>}</div>;
+ if(!job.result)return <div className="space-y-2"><p role="status">{job.error??'Coaching is unavailable for this thread. The original evidence remains accessible.'}</p>{job.retry&&<p>{job.retry.reason}</p>}{job.retry?.canRetry&&<><p>{job.retry.publicationCycle!==undefined?'Reuse the saved draft and support check without another paid request.':`This retry reserves $${(job.retry.maximumUnits/1000000).toFixed(2)} from the shared allowance.`}</p><Button disabled={retry.isPending} onClick={()=>retry.mutate(job.retry!)}>{retry.isPending?'Queuing retry…':job.retry.publicationCycle!==undefined?'Publish saved coaching':job.retry.reuseDraft?'Retry support check':'Retry coaching'}</Button></>}{retry.error&&<p role="alert">{retry.error.message}</p>}</div>;
  const result=job.result;
  return <section className="space-y-3 rounded-md bg-muted p-3" aria-label="Coaching suggestion">
   {state.state==='outdated'&&<p role="status">Earlier advice: its source evidence changed. This saved result remains readable, but reanalysis is needed before using it.</p>}

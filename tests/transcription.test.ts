@@ -1,3 +1,4 @@
+import {createProcessingModule} from '../server/processing';
 import {createTranscriptionRetry} from '../server/transcription-retry';
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
@@ -79,10 +80,49 @@ test('database publication retries replay the saved provider receipt without ano
  await Promise.all([module.recoverReceipt('transcript-'+id),module.recoverReceipt('transcript-'+id)]);expect((await module.status(id,id))?.state).toBe('ready');expect(calls).toBe(1);expect(await db.prepare('SELECT publication_attempts FROM transcriptions WHERE id=?').bind('transcript-'+id).first()).toEqual({publication_attempts:1});
  expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind('transcript-'+id).first()).toEqual({settled_units:225});
 });
+test('explicit recovery republishes an exhausted saved transcript without another charge',async()=>{
+ const id='publication-explicit',env=await setup(id);let fail=true,calls=0;
+ const failingDB=new Proxy(db,{get(target,property){if(property==='prepare')return(sql:string)=>{const statement=target.prepare(sql);if(!sql.startsWith("UPDATE transcriptions SET state='ready'"))return statement;return {bind:(...values:unknown[])=>{const bound=statement.bind(...values);return {run:async()=>{if(fail)throw new Error('Database unavailable');return bound.run();}};}};};const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;}});
+ const module=createTranscriptionModule({...env,DB:failingDB},adapter(async()=>{calls++;return Response.json(provider);}));await module.run(id);
+ for(let i=0;i<4;i++)await module.recoverReceipt('transcript-'+id);
+ expect((await module.status(id,id))?.state).toBe('reconciliation_exhausted');
+ const action={actionId:crypto.randomUUID(),transcriptId:'transcript-'+id,attempt:0};
+ const retry=createTranscriptionRetry({DB:db,MEDIA:bucket});
+ await Promise.all([retry.retry(id,id,action),retry.retry(id,id,action)]);
+ fail=false;await module.reconcileReceipts();
+ expect((await module.status(id,id))?.state).toBe('ready');expect(calls).toBe(1);
+ expect(await db.prepare('SELECT paid_attempt,publication_retries FROM transcriptions WHERE id=?').bind(action.transcriptId).first()).toEqual({paid_attempt:0,publication_retries:1});
+ expect(await db.prepare('SELECT id FROM processing_budget WHERE id=?').bind(action.transcriptId+'-attempt-1').first()).toBeNull();
+ await retry.retry(id,id,action);expect((await module.status(id,id))?.state).toBe('ready');
+});
+
+
+test('receipt publication and ordinary dispatch cannot own different reviews on the same account concurrently',async()=>{
+ const id='publication-slot',env=await setup(id),module=createTranscriptionModule(env,adapter(async()=>Response.json(provider)));await module.run(id);
+ await db.prepare("UPDATE transcriptions SET state='reconciliation',result_key=NULL WHERE id=?").bind('transcript-'+id).run();
+ await db.prepare("INSERT INTO reviews(id,owner_id,title,role,origin,created_at,updated_at) VALUES('publication-slot-other',?,'Review','Engineer','mock',0,0)").bind(id).run();
+ await db.prepare("INSERT INTO processing_jobs(id,review_id,owner_id,upload_id,created_at) VALUES('publication-slot-job','publication-slot-other',?,'other-upload',0)").bind(id).run();
+ let release!:()=>void,started!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),publishing=new Promise<void>(resolve=>{started=resolve;});
+ const pausedBucket=new Proxy(bucket,{get(target,property){if(property==='put')return async(key:string,value:string,options:R2PutOptions)=>{started();await gate;return target.put(key,value,options);};const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;}});
+ const replay=createTranscriptionModule({...env,MEDIA:pausedBucket}).recoverReceipt('transcript-'+id);await publishing;
+ const processing=createProcessingModule(env,async()=>{},async()=>{});
+ try{await processing.reconcile();expect(await db.prepare("SELECT state FROM processing_jobs WHERE id='publication-slot-job'").first()).toEqual({state:'queued'});}finally{release();await replay;}
+ await processing.reconcile();expect(await db.prepare("SELECT state FROM processing_jobs WHERE id='publication-slot-job'").first()).toEqual({state:'running'});
+ await db.prepare("UPDATE transcriptions SET state='reconciliation',result_key=NULL,publication_attempts=0 WHERE id=?").bind('transcript-'+id).run();
+ await module.recoverReceipt('transcript-'+id);expect(await db.prepare('SELECT state,publication_attempts FROM transcriptions WHERE id=?').bind('transcript-'+id).first()).toEqual({state:'reconciliation',publication_attempts:0});
+ await processing.fail('publication-slot-job','Synthetic failure');await processing.reconcile();await module.recoverReceipt('transcript-'+id);expect((await module.status(id,id))?.state).toBe('ready');
+});
 test('invalid stored receipts exhaust a finite publication budget without resubmission',async()=>{
  const id='publication-exhausted',env=await setup(id);let calls=0;const module=createTranscriptionModule(env,adapter(async()=>{calls++;return Response.json({...provider,segments:[{start:2,end:1,text:'Invalid'}]});}));
  await module.run(id);for(let i=0;i<6;i++)await module.recoverReceipt('transcript-'+id);
  expect(calls).toBe(1);expect(await db.prepare('SELECT state,publication_attempts FROM transcriptions WHERE id=?').bind('transcript-'+id).first()).toEqual({state:'reconciliation_exhausted',publication_attempts:3});expect(await bucket.head(`transcripts/${id}/transcript-${id}.provider.json`)).not.toBeNull();
+ const retry=createTranscriptionRetry({DB:db,MEDIA:bucket});
+ for(let cycle=0;cycle<2;cycle++){
+  await retry.retry(id,id,{actionId:crypto.randomUUID(),transcriptId:'transcript-'+id,attempt:0,publicationCycle:cycle});
+  for(let i=0;i<4;i++)await module.recoverReceipt('transcript-'+id);
+ }
+ await expect(retry.retry(id,id,{actionId:crypto.randomUUID(),transcriptId:'transcript-'+id,attempt:0,publicationCycle:2})).rejects.toThrow('three-window limit');
+ expect(calls).toBe(1);expect((await module.status(id,id))?.retry.canRetry).toBe(false);
 });
 test('deletion while replaying a saved receipt cannot restore transcript artifacts',async()=>{
  const id='publication-deleted',env=await setup(id);const module=createTranscriptionModule(env,adapter(async()=>Response.json(provider)));await module.run(id);await db.prepare("UPDATE transcriptions SET state='reconciliation',result_key=NULL WHERE id=?").bind('transcript-'+id).run();

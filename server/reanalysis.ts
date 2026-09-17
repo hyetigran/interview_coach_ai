@@ -1,3 +1,5 @@
+import {accountSlotAvailable} from './account-slot';
+import {reconcileProviderBilling} from './historical-billing';
 import {z} from 'zod';
 import {ContextError} from './review-context';
 import {COACHING_VERSIONS} from '../lib/coaching';
@@ -33,10 +35,10 @@ export function createReanalysisModule(env:Environment,dispatch?:(id:string,grou
   await reconcile();return row;
  }
  async function reconcile() {
-  await createCoachingModule(env).cleanup();if(!send)return;
+  await createCoachingModule(env).cleanup();await reconcileProviderBilling(env);if(!send)return;
   const rows=(await db.prepare("SELECT id,grouping_id FROM coaching_runs WHERE state='queued' OR (state='running' AND dispatch_state='pending') ORDER BY rowid LIMIT 25").all<{id:string;grouping_id:string}>()).results;
   for(const row of rows){
-   await db.prepare("UPDATE coaching_runs SET state='running',deadline=? WHERE id=? AND state='queued' AND EXISTS(SELECT 1 FROM reviews WHERE reviews.id=coaching_runs.review_id AND reviews.lifecycle='active' AND reviews.coaching_revision=coaching_runs.context_revision AND reviews.input_revision=coaching_runs.revision) AND NOT EXISTS(SELECT 1 FROM processing_jobs WHERE owner_id=coaching_runs.owner_id AND (state='running' OR dispatch_state='cancel_pending')) AND NOT EXISTS(SELECT 1 FROM transcriptions WHERE owner_id=coaching_runs.owner_id AND state IN ('queued','encoding','submitting')) AND NOT EXISTS(SELECT 1 FROM grouping_runs WHERE owner_id=coaching_runs.owner_id AND state='running') AND NOT EXISTS(SELECT 1 FROM speaker_confirmations WHERE owner_id=coaching_runs.owner_id AND state='running') AND NOT EXISTS(SELECT 1 FROM coaching_runs AS other WHERE other.owner_id=coaching_runs.owner_id AND other.state='running')").bind(Date.now()+3*3600000,row.id).run();
+   await db.prepare(`UPDATE coaching_runs SET state='running',deadline=? WHERE id=? AND state='queued' AND EXISTS(SELECT 1 FROM reviews WHERE reviews.id=coaching_runs.review_id AND reviews.lifecycle='active' AND reviews.coaching_revision=coaching_runs.context_revision AND reviews.input_revision=coaching_runs.revision) AND ${accountSlotAvailable('coaching_runs.owner_id')}`).bind(Date.now()+3*3600000,row.id).run();
    const delivery=await db.prepare("UPDATE coaching_runs SET dispatch_attempts=dispatch_attempts+1,dispatch_started_at=? WHERE id=? AND state='running' AND dispatch_state='pending' AND dispatch_attempts<3 AND dispatch_started_at<? AND deadline>? AND EXISTS(SELECT 1 FROM reviews WHERE id=coaching_runs.review_id AND lifecycle='active' AND input_revision=coaching_runs.revision AND coaching_revision=coaching_runs.context_revision)").bind(Date.now(),row.id,Date.now()-60000,Date.now()).run();
    if(!delivery.meta.changes)continue;
    try {await send(row.id,row.grouping_id);await db.prepare("UPDATE coaching_runs SET dispatch_state='sent' WHERE id=? AND state='running'").bind(row.id).run();}catch{/* Re-deliver the same persisted Workflow identity. */}

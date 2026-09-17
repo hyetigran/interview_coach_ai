@@ -1,3 +1,5 @@
+import {reconcileProviderBilling} from './historical-billing';
+import {accountSlotAvailable} from './account-slot';
 import {preparationAttemptId} from '../lib/preparation-attempt';
 import { transcriptionIntent } from './transcription';
 import { createHash } from 'node:crypto';
@@ -14,6 +16,7 @@ export function initialJobStatement(db: D1Database, uploadId: string) {
 export function createProcessingModule(env: Environment, dispatch?: (id: string,attempt:number) => Promise<void>, terminate?: (id: string,attempt:number) => Promise<void>) {
   const { DB: db, MEDIA: bucket } = env;
   async function reconcile() {
+    await reconcileProviderBilling(env);
     if (terminate) {
       const cancelled = (await db.prepare("SELECT id,attempt FROM processing_jobs WHERE state IN ('cancelled','failed') AND dispatch_state='cancel_pending' ORDER BY COALESCE(cancellation_attempted_at,0),id LIMIT 25").all<{ id: string;attempt:number }>()).results;
       for (const job of cancelled) { await db.prepare('UPDATE processing_jobs SET cancellation_attempted_at=? WHERE id=?').bind(Date.now(), job.id).run(); try { await terminate(job.id,job.attempt); await db.prepare("UPDATE processing_jobs SET dispatch_state='cancelled' WHERE id=? AND attempt=? AND state IN ('cancelled','failed')").bind(job.id,job.attempt).run(); } catch { /* Retry cancellation without exposing content. */ } }
@@ -25,7 +28,7 @@ export function createProcessingModule(env: Environment, dispatch?: (id: string,
     const jobs = (await db.prepare("SELECT * FROM processing_jobs WHERE state='queued' OR (state='running' AND dispatch_state IN ('pending','sending') AND dispatch_attempts<3 AND dispatch_started_at<?) ORDER BY created_at,id LIMIT 25").bind(Date.now()-10000).all<Job>()).results;
     for (const job of jobs) {
       if (job.state === 'queued') {
-        const claimed = await db.prepare(`UPDATE processing_jobs SET state='running',deadline=? WHERE id=? AND attempt=? AND state='queued' AND ${active} AND NOT EXISTS(SELECT 1 FROM processing_jobs AS busy WHERE busy.owner_id=processing_jobs.owner_id AND (busy.state='running' OR busy.dispatch_state='cancel_pending')) AND NOT EXISTS(SELECT 1 FROM transcriptions WHERE transcriptions.owner_id=processing_jobs.owner_id AND transcriptions.state IN ('queued','encoding','submitting')) AND NOT EXISTS(SELECT 1 FROM coaching_runs WHERE owner_id=processing_jobs.owner_id AND state='running') AND NOT EXISTS(SELECT 1 FROM grouping_runs WHERE owner_id=processing_jobs.owner_id AND state='running') AND NOT EXISTS(SELECT 1 FROM speaker_confirmations WHERE owner_id=processing_jobs.owner_id AND state='running')`).bind(Date.now() + 5 * 60000, job.id,job.attempt).run();
+        const claimed = await db.prepare(`UPDATE processing_jobs SET state='running',deadline=? WHERE id=? AND attempt=? AND state='queued' AND ${active} AND ${accountSlotAvailable('processing_jobs.owner_id')}`).bind(Date.now() + 5 * 60000, job.id,job.attempt).run();
         if (!claimed.meta.changes) continue;
       }
       const dispatchClaim=await db.prepare("UPDATE processing_jobs SET dispatch_state='sending',dispatch_attempts=dispatch_attempts+1,dispatch_started_at=? WHERE id=? AND attempt=? AND state='running' AND dispatch_state IN ('pending','sending') AND dispatch_attempts<3 AND dispatch_started_at<?").bind(Date.now(),job.id,job.attempt,Date.now()-10000).run();

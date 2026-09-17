@@ -13,3 +13,8 @@ test('stale inputs, active work, exhausted attempts and aggregate budget prevent
  const plan=recoveryPlan([artifact({current:false}),artifact({state:'submitting'}),artifact({attempts:3}),artifact({id:'first',maximumUnits:450000}),artifact({id:'second',maximumUnits:450000})],450000);
  expect(plan.steps.map(step=>step.action)).toEqual(['blocked','wait','blocked','retry','blocked']);expect(plan.maximumUnits).toBe(450000);
 });
+
+test('publication exhaustion never turns a completed paid outcome into a fresh paid plan',()=>{
+ const plan=recoveryPlan([artifact({state:'reconciliation_exhausted',receipt:'complete',billing:'settled',attempts:3})],0);
+ expect(plan.steps[0].action).toBe('publish');expect(plan.maximumUnits).toBe(0);
+});

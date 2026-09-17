@@ -58,11 +58,11 @@ export const processingJobs = sqliteTable('processing_jobs', {attempt:integer().
   revision: integer().notNull().default(1), state: text().notNull().default('queued'), dispatchState: text('dispatch_state').notNull().default('pending'),
   createdAt: integer('created_at').notNull(), deadline: integer().notNull().default(0), finishedAt: integer('finished_at'), error: text(), result: text(), cancellationAttemptedAt: integer('cancellation_attempted_at'),
 });
-export const processingBudget = sqliteTable('processing_budget', {
+export const processingBudget = sqliteTable('processing_budget', {reconciliationCheckedAt:integer('reconciliation_checked_at').notNull().default(0),
   id: text().primaryKey(), operation: text().notNull(), reservedUnits: integer('reserved_units').notNull(), settledUnits: integer('settled_units'), state: text().notNull().default('reserved'),
 });
 
-export const transcriptions = sqliteTable('transcriptions', {paidAttempt:integer('paid_attempt').notNull().default(0),recoveryActionId:text('recovery_action_id'),publicationCheckedAt:integer('publication_checked_at').notNull().default(0),publicationAttempts:integer('publication_attempts').notNull().default(0),publicationDeadline:integer('publication_deadline').notNull().default(0),
+export const transcriptions = sqliteTable('transcriptions', {publicationRetries:integer('publication_retries').notNull().default(0),paidAttempt:integer('paid_attempt').notNull().default(0),recoveryActionId:text('recovery_action_id'),publicationCheckedAt:integer('publication_checked_at').notNull().default(0),publicationAttempts:integer('publication_attempts').notNull().default(0),publicationDeadline:integer('publication_deadline').notNull().default(0),
   parentId:text('parent_id'),correctedUtteranceId:text('corrected_utterance_id'),
   id: text().primaryKey(), reviewId: text('review_id').notNull(), ownerId: text('owner_id').notNull(), jobId: text('job_id').notNull().unique(),
   revision: integer().notNull(), state: text().notNull().default('queued'), resultKey: text('result_key'), requestId: text('request_id'),
@@ -81,7 +81,7 @@ export const groupingRuns = sqliteTable('grouping_runs', {recoveryActionId:text(
   id:text().primaryKey(),reviewId:text('review_id').notNull(),ownerId:text('owner_id').notNull(),transcriptId:text('transcript_id').notNull(),
   revision:integer().notNull(),state:text().notNull().default('running'),total:integer().notNull(),deadline:integer().notNull(),
 });
-export const groupingChunks = sqliteTable('grouping_chunks', {attempt:integer().notNull().default(0),inputPayload:text('input_payload'),reuseResult:text('reuse_result'),reuseInput:text('reuse_input'),recoveryActionId:text('recovery_action_id'),submitted:integer().notNull().default(0),publicationAttempts:integer('publication_attempts').notNull().default(0),publicationDeadline:integer('publication_deadline').notNull().default(0),publicationCheckedAt:integer('publication_checked_at').notNull().default(0),
+export const groupingChunks = sqliteTable('grouping_chunks', {publicationRetries:integer('publication_retries').notNull().default(0),attempt:integer().notNull().default(0),inputPayload:text('input_payload'),reuseResult:text('reuse_result'),reuseInput:text('reuse_input'),recoveryActionId:text('recovery_action_id'),submitted:integer().notNull().default(0),publicationAttempts:integer('publication_attempts').notNull().default(0),publicationDeadline:integer('publication_deadline').notNull().default(0),publicationCheckedAt:integer('publication_checked_at').notNull().default(0),
   id:text().primaryKey(),runId:text('run_id').notNull(),ordinal:integer().notNull(),state:text().notNull().default('queued'),result:text(),error:text(),startedAt:integer('started_at'),
 },table=>[uniqueIndex('grouping_chunk_ordinal').on(table.runId,table.ordinal)]);
 
@@ -90,7 +90,7 @@ export const coachingRuns = sqliteTable('coaching_runs',{retryAttempts:integer('
  id:text().primaryKey(),reviewId:text('review_id').notNull(),ownerId:text('owner_id').notNull(),revision:integer().notNull(),state:text().notNull().default('running'),deadline:integer().notNull(),
  model:text().notNull(),promptVersion:text('prompt_version').notNull(),rubricVersion:text('rubric_version').notNull(),schemaVersion:text('schema_version').notNull(),verificationVersion:text('verification_version').notNull(),
 },table=>[uniqueIndex('coaching_input_context_grouping').on(table.reviewId,table.revision,table.contextRevision,table.groupingVersion)]);
-export const coachingJobs = sqliteTable('coaching_jobs',{attempt:integer().notNull().default(0),draftAttempt:integer('draft_attempt').notNull().default(0),reuseDraft:text('reuse_draft'),recoveryActionId:text('recovery_action_id'),
+export const coachingJobs = sqliteTable('coaching_jobs',{publicationRetries:integer('publication_retries').notNull().default(0),attempt:integer().notNull().default(0),draftAttempt:integer('draft_attempt').notNull().default(0),reuseDraft:text('reuse_draft'),recoveryActionId:text('recovery_action_id'),
  publicationAttempts:integer('publication_attempts').notNull().default(0),publicationDeadline:integer('publication_deadline').notNull().default(0),publicationCheckedAt:integer('publication_checked_at').notNull().default(0),
  id:text().primaryKey(),runId:text('run_id').notNull(),threadId:text('thread_id').notNull(),state:text().notNull().default('queued'),sources:text(),draft:text(),result:text(),error:text(),startedAt:integer('started_at'),draftDispatched:integer('draft_dispatched').notNull().default(0),verifyDispatched:integer('verify_dispatched').notNull().default(0),
 },table=>[uniqueIndex('coaching_thread').on(table.runId,table.threadId)]);

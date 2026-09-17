@@ -1,3 +1,5 @@
+import {accountSlotAvailable} from './account-slot';
+import {reconcileProviderBilling} from './historical-billing';
 import {groupingAttemptId} from '../lib/grouping-attempt';
 import {z} from 'zod';
 import {rebaseUnchangedGroups} from '../lib/transcript-corrections';
@@ -118,7 +120,7 @@ export function createGroupingModule(env:Environment, request:typeof fetch=fetch
     const call=groupingAttemptId(chunkId,chunk.attempt);
     await db.prepare('UPDATE grouping_chunks SET publication_checked_at=? WHERE id=?').bind(Date.now(),chunkId).run();
     const object=await env.MEDIA.get(`grouping/${run.review_id}/${call}.provider.json`);if(!object)return;
-    const now=Date.now();const claim=await db.prepare(`UPDATE grouping_chunks SET state='publishing',started_at=?,publication_attempts=publication_attempts+1,publication_deadline=CASE WHEN publication_deadline=0 THEN ? ELSE publication_deadline END WHERE id=? AND attempt=? AND state IN ('failed','unknown','reconciliation') AND publication_attempts<3 AND (publication_deadline=0 OR publication_deadline>?) AND EXISTS(SELECT 1 FROM grouping_runs WHERE id=? AND ${active}) RETURNING publication_attempts`).bind(now,now+15*60000,chunkId,chunk.attempt,now,id).first<{publication_attempts:number}>();if(!claim)return;
+    const now=Date.now();const claim=await db.prepare(`UPDATE grouping_chunks SET state='publishing',started_at=?,publication_attempts=publication_attempts+1,publication_deadline=CASE WHEN publication_deadline=0 THEN ? ELSE publication_deadline END WHERE id=? AND attempt=? AND state IN ('failed','unknown','reconciliation') AND publication_attempts<3 AND (publication_deadline=0 OR publication_deadline>?) AND EXISTS(SELECT 1 FROM grouping_runs WHERE id=? AND ${active} AND ${accountSlotAvailable('grouping_runs.owner_id','grouping_runs.review_id')}) RETURNING publication_attempts`).bind(now,now+15*60000,chunkId,chunk.attempt,now,id).first<{publication_attempts:number}>();if(!claim)return;
     try {
       const receipt=z.object({response:z.string().max(2000000),input:z.string().max(250000),transcriptId:z.string()}).parse(await object.json());
       const data=JSON.parse(receipt.response);await budget.settle(call,structuredCharge(data));
@@ -132,6 +134,7 @@ export function createGroupingModule(env:Environment, request:typeof fetch=fetch
     }
   }
   async function reconcileReceipts() {
+    await reconcileProviderBilling(env);
     await cleanup();const rows=(await db.prepare(`SELECT grouping_chunks.run_id,grouping_chunks.ordinal FROM grouping_chunks JOIN grouping_runs ON grouping_runs.id=grouping_chunks.run_id WHERE grouping_chunks.state IN ('failed','unknown','reconciliation') AND grouping_chunks.publication_attempts<3 AND (grouping_chunks.publication_deadline=0 OR grouping_chunks.publication_deadline>?) AND ${active} ORDER BY grouping_chunks.publication_checked_at,grouping_chunks.id LIMIT 10`).bind(Date.now()).all<{run_id:string;ordinal:number}>()).results;
     for(const row of rows){try{await recoverReceipt(row.run_id,row.ordinal);}catch{/* Temporary storage failures cannot starve other receipts. */}}
   }

@@ -1,3 +1,5 @@
+import {reconcileProviderBilling} from './historical-billing';
+import {accountSlotAvailable} from './account-slot';
 import {confirmationCanRestart} from './confirmation-recovery';
 import { z } from 'zod';
 import { transcriptSchema } from '../lib/transcript';
@@ -29,6 +31,7 @@ export function createSpeakerModule(env: Environment, dispatch?: (id: string) =>
     await reconcile(); return await status(owner,review);
   }
   async function reconcile() {
+    await reconcileProviderBilling(env);
     await db.prepare(`UPDATE speaker_confirmations SET state='outdated' WHERE state NOT IN ('cancelled','outdated') AND NOT ${active} AND EXISTS(SELECT 1 FROM reviews WHERE reviews.id=speaker_confirmations.review_id AND lifecycle='active')`).run();
     await db.prepare("UPDATE speaker_confirmations SET state='cancelled',speakers='[]' WHERE state<>'cancelled' AND NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=speaker_confirmations.review_id AND lifecycle='active')").run();
     await db.prepare("UPDATE speaker_confirmations SET state='failed' WHERE state='running' AND deadline<=?").bind(Date.now()).run();
@@ -36,7 +39,7 @@ export function createSpeakerModule(env: Environment, dispatch?: (id: string) =>
     const rows = (await db.prepare("SELECT * FROM speaker_confirmations WHERE state='queued' OR (state='running' AND dispatch_state='pending') ORDER BY confirmed_at LIMIT 25").all<Row>()).results;
     for (const row of rows) {
       if (row.state === 'queued') {
-        const claim = await db.prepare(`UPDATE speaker_confirmations SET state='running',deadline=? WHERE id=? AND state='queued' AND ${active} AND NOT EXISTS(SELECT 1 FROM processing_jobs WHERE owner_id=speaker_confirmations.owner_id AND (state='running' OR dispatch_state='cancel_pending')) AND NOT EXISTS(SELECT 1 FROM coaching_runs WHERE owner_id=speaker_confirmations.owner_id AND state='running') AND NOT EXISTS(SELECT 1 FROM grouping_runs WHERE owner_id=speaker_confirmations.owner_id AND state='running') AND NOT EXISTS(SELECT 1 FROM transcriptions WHERE owner_id=speaker_confirmations.owner_id AND state IN ('queued','encoding','submitting')) AND NOT EXISTS(SELECT 1 FROM speaker_confirmations AS other WHERE other.owner_id=speaker_confirmations.owner_id AND other.state='running')`).bind(Date.now()+300000,row.id).run();
+        const claim = await db.prepare(`UPDATE speaker_confirmations SET state='running',deadline=? WHERE id=? AND state='queued' AND ${active} AND ${accountSlotAvailable('speaker_confirmations.owner_id')}`).bind(Date.now()+300000,row.id).run();
         if (!claim.meta.changes) continue;
       }
       const delivery=await db.prepare(`UPDATE speaker_confirmations SET dispatch_attempts=dispatch_attempts+1,dispatch_started_at=? WHERE id=? AND state='running' AND dispatch_state='pending' AND deadline>? AND dispatch_attempts<3 AND dispatch_started_at<? AND ${active}`).bind(Date.now(),row.id,Date.now(),Date.now()-60000).run();

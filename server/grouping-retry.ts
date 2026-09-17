@@ -1,10 +1,11 @@
+import {accountSlotAvailable} from './account-slot';
 import {z} from 'zod';
 import {RecoveryError} from './recovery';
 import {createGroupingModule,GROUPING_RESERVATION} from './grouping';
 import {groupingAttemptId} from '../lib/grouping-attempt';
 type Environment=Pick<CloudflareEnv,'DB'|'MEDIA'|'OPENAI_API_KEY'>;
 type Run={id:string;transcript_id:string;revision:number;output_version:number;total:number;state:string};
-type Chunk={id:string;ordinal:number;attempt:number;state:string;result:string|null;input_payload:string|null;billing:string|null};
+type Chunk={publication_retries:number;id:string;ordinal:number;attempt:number;state:string;result:string|null;input_payload:string|null;billing:string|null};
 const stepsSchema=z.array(z.object({ordinal:z.number().int().nonnegative(),attempt:z.number().int().min(1).max(2)})).max(1000);
 type Dispatch=(actionId:string,runId:string)=>Promise<void>;
 export function createGroupingRetry(env:Environment,dispatch?:Dispatch) {
@@ -17,6 +18,11 @@ export function createGroupingRetry(env:Environment,dispatch?:Dispatch) {
   const suffix=start<0?[]:rows.slice(start);
   let reason='Retry the incomplete section and recheck dependent sections. Unchanged completed results will be reused.';
   const manual=await db.prepare('SELECT id FROM transcript_correction_intents WHERE id=? AND manual_groups IS NOT NULL').bind(run.transcript_id).first();
+  for(const row of suffix){
+   if(row.state==='ready'||!await env.MEDIA.head(`grouping/${review}/${groupingAttemptId(row.id,row.attempt)}.provider.json`))continue;
+   const publication={chunkId:row.id,attempt:row.attempt,cycle:row.publication_retries};
+   return {run,rows,suffix:[row],publication,publicationPending:['reconciliation','publishing','unknown','failed'].includes(row.state),maximumUnits:0,canRetry:!manual&&run.state==='partial'&&row.state==='reconciliation_exhausted'&&row.publication_retries<2,reason:manual?'Your saved question groups are authoritative. Use Correct question groups.':row.publication_retries>=2?'Saved grouping publication reached its three-window limit. Its receipt remains retained.':'Publish the saved grouping result without another provider request.'};
+  }
   const used=await db.prepare("SELECT COALESCE(SUM(CASE WHEN state='reserved' THEN reserved_units ELSE COALESCE(settled_units,0) END),0) AS units FROM processing_budget").first<{units:number}>();
   let canRetry=true;
   if(!suffix.length){canRetry=false;reason='All grouping sections are complete.';}
@@ -30,10 +36,10 @@ export function createGroupingRetry(env:Environment,dispatch?:Dispatch) {
   return {run,rows,suffix,canRetry,reason,maximumUnits:suffix.length*GROUPING_RESERVATION};
  }
  async function plan(owner:string,review:string) {
-  try{const p=await inspect(owner,review);return {runId:p.run.id,version:p.run.output_version,canRetry:p.canRetry,reason:p.reason,maximumUnits:p.maximumUnits,sections:p.suffix.map(row=>row.ordinal+1)};}catch(error){if(error instanceof RecoveryError)return null;throw error;}
+  try{const p=await inspect(owner,review);return {runId:p.run.id,version:p.run.output_version,publication:p.publication,publicationPending:p.publicationPending,canRetry:p.canRetry,reason:p.reason,maximumUnits:p.maximumUnits,sections:p.suffix.map(row=>row.ordinal+1)};}catch(error){if(error instanceof RecoveryError)return null;throw error;}
  }
  async function retry(owner:string,review:string,input:unknown) {
-  const value=z.object({actionId:z.uuid(),runId:z.string().min(1).max(120),version:z.number().int().nonnegative()}).strict().parse(input);
+  const value=z.object({actionId:z.uuid(),runId:z.string().min(1).max(120),version:z.number().int().nonnegative(),publication:z.object({chunkId:z.string().min(1).max(200),attempt:z.number().int().min(0).max(2),cycle:z.number().int().min(0).max(2)}).strict().optional()}).strict().parse(input);
   if(!await db.prepare("SELECT id FROM reviews WHERE id=? AND owner_id=? AND lifecycle='active'").bind(review,owner).first())throw new RecoveryError(404,'Review not found.');
   const old=await db.prepare('SELECT * FROM recovery_requests WHERE id=?').bind(value.actionId).first<{stage:string;target_id:string;target_attempt:number;owner_id:string;review_id:string;state:string}>();
   if(old){if(old.stage!=='grouping'||old.target_id!==value.runId||old.target_attempt!==value.version||old.owner_id!==owner||old.review_id!==review)throw new RecoveryError(409,'This retry action belongs to different work.');if(old.state==='applied'){await reconcile();return {accepted:true};}}
@@ -43,6 +49,20 @@ export function createGroupingRetry(env:Environment,dispatch?:Dispatch) {
   const p=await inspect(owner,review);
   if(!p.canRetry){if(await db.prepare("SELECT id FROM recovery_requests WHERE id=? AND owner_id=? AND review_id=? AND stage='grouping' AND target_id=? AND target_attempt=? AND state='applied'").bind(value.actionId,owner,review,value.runId,value.version).first()){await reconcile();return {accepted:true};}throw new RecoveryError(409,p.reason);}
   if(p.run.id!==value.runId||p.run.output_version!==value.version)throw new RecoveryError(409,'Grouping changed. Reload the retry plan.');
+  if(p.publication){
+   if(!value.publication||JSON.stringify(value.publication)!==JSON.stringify(p.publication))throw new RecoveryError(409,'Reload the saved grouping publication plan.');
+   const item=value.publication;
+   const eligible=`SELECT c.id FROM grouping_chunks c JOIN grouping_runs g ON g.id=c.run_id JOIN reviews r ON r.id=g.review_id JOIN speaker_confirmations s ON s.id=g.id WHERE c.id=? AND c.attempt=? AND c.publication_retries=? AND c.publication_retries<2 AND c.state='reconciliation_exhausted' AND g.id=? AND g.owner_id=? AND g.review_id=? AND g.output_version=? AND g.state='partial' AND r.lifecycle='active' AND r.input_revision=g.revision AND s.state='confirmed' AND NOT EXISTS(SELECT 1 FROM transcript_correction_intents WHERE id=g.transcript_id AND manual_groups IS NOT NULL)`;
+   const args=[item.chunkId,item.attempt,item.cycle,value.runId,owner,review,value.version];
+   await db.batch([
+    db.prepare(`INSERT OR IGNORE INTO recovery_requests(id,review_id,owner_id,stage,target_id,target_attempt,input_revision,context_revision,created_at,plan) SELECT ?,?,?,'grouping',?,?,r.input_revision,r.coaching_revision,?,? FROM reviews r WHERE r.id=? AND EXISTS(${eligible})`).bind(value.actionId,review,owner,value.runId,value.version,Date.now(),JSON.stringify({publication:item}),review,...args),
+    db.prepare(`UPDATE grouping_chunks SET state='reconciliation',publication_retries=publication_retries+1,publication_attempts=0,publication_deadline=0,publication_checked_at=0,recovery_action_id=?,error='Retrying saved grouping publication without another provider request.' WHERE id IN (${eligible}) AND EXISTS(SELECT 1 FROM recovery_requests WHERE id=? AND owner_id=? AND review_id=? AND stage='grouping' AND target_id=? AND target_attempt=? AND state='pending')`).bind(value.actionId,...args,value.actionId,owner,review,value.runId,value.version),
+    db.prepare("UPDATE recovery_requests SET state='applied',dispatch_state='sent' WHERE id=? AND owner_id=? AND review_id=? AND stage='grouping' AND EXISTS(SELECT 1 FROM grouping_chunks WHERE id=? AND recovery_action_id=?)").bind(value.actionId,owner,review,item.chunkId,value.actionId),
+   ]);
+   if(!await db.prepare("SELECT id FROM recovery_requests WHERE id=? AND owner_id=? AND review_id=? AND stage='grouping' AND target_id=? AND target_attempt=? AND state='applied'").bind(value.actionId,owner,review,value.runId,value.version).first())throw new RecoveryError(409,'The saved publication plan changed. Reload before retrying.');
+   return {accepted:true};
+  }
+  if(value.publication)throw new RecoveryError(409,'Saved publication changed. Reload before planning any paid work.');
   for(const row of p.suffix){
    if(row.state!=='ready'||row.input_payload)continue;
    const object=await env.MEDIA.get(`grouping/${review}/${groupingAttemptId(row.id,row.attempt)}.provider.json`);
@@ -56,11 +76,7 @@ export function createGroupingRetry(env:Environment,dispatch?:Dispatch) {
    AND r.lifecycle='active' AND r.input_revision=g.revision AND s.state='confirmed'
    AND NOT EXISTS(SELECT 1 FROM transcript_correction_intents WHERE id=g.transcript_id AND manual_groups IS NOT NULL)
    AND NOT EXISTS(SELECT 1 FROM grouping_chunks c LEFT JOIN processing_budget b ON b.id=CASE WHEN c.attempt=0 THEN c.id ELSE c.id||'-attempt-'||c.attempt END WHERE c.run_id=g.id AND c.ordinal>=? AND (c.attempt>=2 OR c.state NOT IN ('ready','failed','configuration','budget_blocked','reconciliation_exhausted') OR b.state='reserved'))
-   AND NOT EXISTS(SELECT 1 FROM processing_jobs WHERE owner_id=g.owner_id AND (state='running' OR dispatch_state='cancel_pending'))
-   AND NOT EXISTS(SELECT 1 FROM transcriptions WHERE owner_id=g.owner_id AND state IN ('queued','encoding','submitting','publishing'))
-   AND NOT EXISTS(SELECT 1 FROM speaker_confirmations WHERE owner_id=g.owner_id AND state IN ('queued','running'))
-   AND NOT EXISTS(SELECT 1 FROM grouping_runs other WHERE other.owner_id=g.owner_id AND other.state='running')
-   AND NOT EXISTS(SELECT 1 FROM coaching_runs WHERE owner_id=g.owner_id AND state IN ('queued','running'))`;
+   AND ${accountSlotAvailable('g.owner_id')}`;
   const args=[value.runId,owner,review,value.version,start];
   const statements=[db.prepare(`INSERT OR IGNORE INTO recovery_requests(id,review_id,owner_id,stage,target_id,target_attempt,input_revision,context_revision,created_at,plan,state) SELECT ?,?,?,'grouping',?,?,?,(SELECT coaching_revision FROM reviews WHERE id=?),?,?,'pending' WHERE EXISTS(${eligible})`).bind(value.actionId,review,owner,value.runId,value.version,p.run.revision,review,Date.now(),JSON.stringify(steps),...args),
    db.prepare(`UPDATE grouping_runs SET recovery_action_id=?,state='running',deadline=?,output_version=output_version+1 WHERE id IN (${eligible}) AND EXISTS(SELECT 1 FROM recovery_requests WHERE id=? AND stage='grouping' AND state='pending' AND target_id=? AND target_attempt=?) AND COALESCE((SELECT SUM(CASE WHEN state='reserved' THEN reserved_units ELSE COALESCE(settled_units,0) END) FROM processing_budget),0)+?<=50000000`).bind(value.actionId,Date.now()+3*3600000,...args,value.actionId,value.runId,value.version,p.maximumUnits)];
