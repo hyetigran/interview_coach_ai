@@ -62,7 +62,16 @@
           "class_name": "ContinuationWorkflow",
           "script_name": "interview-coach-jobs-preview"
         }
-      ]
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "MEDIA_PROCESSOR",
+            "class_name": "MediaProcessor",
+            "script_name": "interview-coach-media-preview"
+          }
+        ]
+      }
     },
     "production": {
       "name": "interview-coach",

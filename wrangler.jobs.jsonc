@@ -79,6 +79,15 @@
         "crons": [
           "* * * * *"
         ]
+      },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "MEDIA_PROCESSOR",
+            "class_name": "MediaProcessor",
+            "script_name": "interview-coach-media-preview"
+          }
+        ]
       }
     },
     "production": {

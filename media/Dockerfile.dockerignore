@@ -1,0 +1,6 @@
+**
+!scripts/
+!scripts/media-adapter.mjs
+!media/
+!media/container-entry.mjs
+!media/Dockerfile
