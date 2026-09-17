@@ -25,21 +25,25 @@ export function createMediaModule(env: Environment) {
   }
   async function parts(id: string) { return (await db.prepare("SELECT number,etag,sha256 FROM upload_parts WHERE upload_id=? AND etag<>'' ORDER BY number").bind(id).all<Part>()).results; }
   async function view(row: Row): Promise<UploadState> { return { id: row.id, name: row.name, size: row.size, state: row.state, expiresAt: row.expires_at, parts: (await parts(row.id)).map(p => ({ number: p.number, sha256: p.sha256 })) }; }
+  async function cleanupAudio(id: string) {
+    let cursor: string | undefined;
+    do { const page = await bucket.list({ prefix: 'audio/' + id + '/', cursor }); if (page.objects.length) await bucket.delete(page.objects.map(object => object.key)); cursor = page.truncated ? page.cursor : undefined; } while (cursor);
+  }
   async function cleanupRow(row: Row) {
     // Keep tombstones and object keys: a late completion can write after an earlier cleanup.
-    await Promise.all([row.multipart_id ? bucket.resumeMultipartUpload(row.object_key, row.multipart_id).abort() : Promise.resolve(), bucket.delete(row.object_key), bucket.delete('audio/' + row.id)]);
+    await Promise.all([row.multipart_id ? bucket.resumeMultipartUpload(row.object_key, row.multipart_id).abort() : Promise.resolve(), bucket.delete(row.object_key), cleanupAudio(row.id)]);
     await db.prepare('DELETE FROM upload_parts WHERE upload_id=?').bind(row.id).run();
     await db.prepare("UPDATE uploads SET cleaned_at=?, name='' WHERE id=? AND state='cleanup'").bind(Date.now(), row.id).run();
   }
   async function cleanup() {
-    await db.prepare("UPDATE uploads SET state='cleanup' WHERE admitted_at IS NULL AND state<>'cleanup' AND expires_at<=?").bind(Date.now()).run();
+    await db.prepare("UPDATE uploads SET state='cleanup' WHERE admitted_at IS NULL AND state NOT IN ('cleanup','rejected') AND expires_at<=?").bind(Date.now()).run();
     const rows = (await db.prepare("SELECT * FROM uploads WHERE state='cleanup' ORDER BY COALESCE(cleanup_attempted_at,0), created_at LIMIT 25").all<Row>()).results;
     for (const row of rows) { await db.prepare('UPDATE uploads SET cleanup_attempted_at=? WHERE id=?').bind(Date.now(), row.id).run(); try { await cleanupRow(row); } catch { /* Persisted tombstone is retried by the next sweep. */ } }
   }
   async function status(owner: string, review: string): Promise<MediaState> {
     await authorize(owner, review); await cleanup();
     const row = await db.prepare('SELECT * FROM uploads WHERE review_id=? AND owner_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1').bind(review, owner).first<Row>();
-    const usage = await db.prepare("SELECT SUM(CASE WHEN admitted_at IS NOT NULL THEN 1 ELSE 0 END) AS admitted, SUM(CASE WHEN admitted_at IS NULL AND state<>'cleanup' AND expires_at>? THEN 1 ELSE 0 END) AS reserved FROM uploads WHERE owner_id=?").bind(Date.now(), owner).first<{ admitted: number; reserved: number }>();
+    const usage = await db.prepare("SELECT SUM(CASE WHEN admitted_at IS NOT NULL THEN 1 ELSE 0 END) AS admitted, SUM(CASE WHEN admitted_at IS NULL AND state NOT IN ('cleanup','rejected') AND expires_at>? THEN 1 ELSE 0 END) AS reserved FROM uploads WHERE owner_id=?").bind(Date.now(), owner).first<{ admitted: number; reserved: number }>();
     return { upload: row ? await view(row) : null, admitted: usage?.admitted ?? 0, reserved: usage?.reserved ?? 0, allowance };
   }
   async function initiate(owner: string, review: string, input: unknown) {
@@ -86,7 +90,7 @@ export function createMediaModule(env: Environment) {
   }
   async function complete(owner: string, review: string, id: string) {
     let row = await owned(owner, review, id);
-    if (row.state === 'admitted') return view(row);
+    if (['admitted', 'validating', 'rejected'].includes(row.state)) return view(row);
     if (row.expires_at <= Date.now() || !['uploading', 'completing'].includes(row.state) || !row.multipart_id) throw new MediaError(410, 'Upload expired. Start again.');
     const uploaded = await parts(id);
     if (uploaded.length !== Math.ceil(row.size / PART_BYTES)) throw new MediaError(409, 'Upload all parts before completing.');
@@ -99,11 +103,11 @@ export function createMediaModule(env: Environment) {
       if (object.size !== row.size || object.size > MAX_AUDIO_BYTES || object.httpMetadata?.contentType !== (/\.wav$/i.test(row.name) ? 'audio/wav' : 'application/octet-stream')) throw new MediaError(422, 'Stored recording metadata does not match the upload.');
       if (/\.wav$/i.test(row.name)) { const header = await bucket.get(row.object_key, { range: { offset: 0, length: 44 } });
       if (!header) throw new Error('Recording unavailable'); try { validateWave(await header.arrayBuffer(), object.size); } catch (error) { throw new MediaError(422, error instanceof Error ? error.message : 'Invalid audio.'); } }
-      const publication = db.prepare(`UPDATE uploads SET state='admitted',admitted_at=?,lock_until=0 WHERE id=? AND claim_token=? AND state='completing' AND expires_at>? AND ${activeReview}`).bind(Date.now(), id, claimToken, Date.now());
+      const publication = db.prepare(`UPDATE uploads SET state=?,admitted_at=?,lock_until=0 WHERE id=? AND claim_token=? AND state='completing' AND expires_at>? AND ${activeReview}`).bind(/\.wav$/i.test(row.name) ? 'admitted' : 'validating', /\.wav$/i.test(row.name) ? Date.now() : null, id, claimToken, Date.now());
       const [published] = await db.batch([publication, initialJobStatement(db, id)]);
       if (!published.meta.changes) {
         const latest = await get(id);
-        if (latest && (latest.state === 'admitted' || (latest.state === 'completing' && latest.expires_at > Date.now()))) {
+        if (latest && (['admitted', 'validating', 'rejected'].includes(latest.state) || (latest.state === 'completing' && latest.expires_at > Date.now()))) {
           await authorize(owner, review); return view(latest);
         }
         await bucket.delete(row.object_key); throw new MediaError(410, 'Review or upload is no longer active.');

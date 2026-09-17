@@ -43,9 +43,11 @@ export async function extractAudio(source, directory, signal) {
   return { target, bytes: bytes + 44 };
 }
 
-export function mediaServer(secret, temporaryRoot = tmpdir()) {
+export function mediaServer(secret, temporaryRoot = tmpdir(), initialized = Promise.resolve()) {
+  let ready = false; initialized.then(() => { ready = true; });
   const operations = new Map();
   return createServer(async (request, response) => {
+    if (!ready) { response.writeHead(503).end(); return; }
     const supplied = Buffer.from(request.headers.authorization ?? ''); const expected = Buffer.from(`Bearer ${secret}`);
     if (!secret || supplied.length !== expected.length || !timingSafeEqual(supplied, expected) || request.headers.origin) { response.writeHead(403).end(); return; }
     if (request.url === '/health' && request.method === 'GET') { response.end('Local media adapter ready'); return; }
@@ -56,9 +58,10 @@ export function mediaServer(secret, temporaryRoot = tmpdir()) {
     if (operations.has(id) || operations.size >= 2) { response.writeHead(409).end('Media preparation is busy. Retry shortly.'); return; }
     const controller = new AbortController(); operations.set(id, controller);
     const timer = setTimeout(() => controller.abort(), 75000);
-    const directory = await mkdtemp(join(temporaryRoot, 'interviewcoach-media-'));
+    let directory;
     response.on('close', () => { if (!response.writableFinished) controller.abort(); });
     try {
+      directory = await mkdtemp(join(temporaryRoot, 'interviewcoach-media-'));
       let observed = 0;
       const bounded = new Transform({ transform(chunk, _encoding, callback) { observed += chunk.length; callback(observed > MAX_BYTES ? new Error('Recording exceeds 256 MiB.') : null, chunk); } });
       const source = join(directory, 'source');
@@ -68,7 +71,7 @@ export function mediaServer(secret, temporaryRoot = tmpdir()) {
       await pipeline(createReadStream(result.target), response, { signal: controller.signal });
     } catch (error) {
       if (!response.headersSent && !response.destroyed) response.writeHead(422).end(controller.signal.aborted ? 'Media preparation timed out or was cancelled.' : error.message);
-    } finally { clearTimeout(timer); operations.delete(id); await rm(directory, { recursive: true, force: true }); }
+    } finally { clearTimeout(timer); operations.delete(id); if (directory) await rm(directory, { recursive: true, force: true }); }
   });
 }
 
@@ -77,11 +80,12 @@ if (process.argv[1]?.endsWith('/media-adapter.mjs')) {
   const secret = /^AUTH_SECRET=(.+)$/m.exec(vars)?.[1];
   if (!secret) throw new Error('Run pnpm setup:local first.');
   const temporaryRoot = join(process.cwd(), '.wrangler', 'media-temporary');
-  const server = mediaServer(secret.trim(), temporaryRoot);
+  let initialize; const initialized = new Promise(resolve => { initialize = resolve; });
+  const server = mediaServer(secret.trim(), temporaryRoot, initialized);
   server.listen(8790, '127.0.0.1', async () => {
     // A successful exclusive listen ensures no other adapter uses these scratch files.
     await rm(temporaryRoot, { recursive: true, force: true }); await mkdir(temporaryRoot, { recursive: true, mode: 0o700 });
-    console.log('Local media adapter ready on port 8790');
+    initialize(); console.log('Local media adapter ready on port 8790');
   });
   process.on('SIGTERM', () => { server.close(); server.closeAllConnections(); });
 }

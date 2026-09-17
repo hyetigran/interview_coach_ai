@@ -37,3 +37,11 @@ test('local adapter requires its secret and rejects browser origins', async () =
     assert.equal(await (await fetch(url, { headers: { authorization: 'Bearer test-secret' } })).text(), 'Local media adapter ready');
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
+test('scratch directory failure responds without leaking the operation slot', async () => {
+  const server = mediaServer('test-secret', '/missing/interview-coach-scratch');
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/operations/prepare-00000000-0000-0000-0000-000000000000`;
+    for (let n = 0; n < 2; n++) assert.equal((await fetch(url, { method: 'POST', headers: { authorization: 'Bearer test-secret' }, body: 'video' })).status, 422);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});

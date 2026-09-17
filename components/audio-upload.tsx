@@ -15,7 +15,7 @@ export function AudioUpload({ reviewId, ownerId }: { reviewId: string; ownerId: 
   const abort = useRef<AbortController | null>(null);
   const path = `/api/reviews/${reviewId}`;
   const queryKey = ['media', ownerId, reviewId];
-  const state = useQuery({ queryKey, queryFn: () => api<MediaState>(path + '/media'), refetchInterval: query => ['initializing', 'completing'].includes(query.state.data?.upload?.state ?? '') ? 2000 : false });
+  const state = useQuery({ queryKey, queryFn: () => api<MediaState>(path + '/media'), refetchInterval: query => ['initializing', 'completing', 'validating'].includes(query.state.data?.upload?.state ?? '') ? 2000 : false });
   const current = state.data?.upload;
   const upload = useMutation({
     mutationFn: async () => {
@@ -53,7 +53,7 @@ export function AudioUpload({ reviewId, ownerId }: { reviewId: string; ownerId: 
     {state.data && <p className="mt-2 text-sm">{state.data.admitted} of {state.data.allowance} recording admissions used; {state.data.reserved} reserved. Deleting a recording does not restore an admission.</p>}
     {state.isPending && <p role="status" className="mt-4">Loading recording…</p>}
     {state.error && <p role="alert" className="mt-4">{state.error.message}</p>}
-    {current?.state === 'admitted' ? <div className="mt-4"><p className="mb-3">{current.name}</p><PreparationStatus reviewId={reviewId} /></div> : <>
+    {current && ['admitted', 'validating', 'rejected'].includes(current.state) ? <div className="mt-4"><p className="mb-3">{current.name}</p><PreparationStatus reviewId={reviewId} /></div> : <>
       {current?.state === 'cleanup' && <p role="status" className="mt-4">The previous upload expired, was invalid, or was cancelled. Select a recording to start again; its unused reservation has been released.</p>}
       {current?.state === 'uploading' && <p className="mt-4">Saved {Math.round(savedBytes / current.size * 100)}% of {current.name}. Reselect the original file to resume. Upload expires {new Date(current.expiresAt).toLocaleString()}.</p>}
       {current?.state === 'completing' && <p role="status" className="mt-4">Checking your recording. If this was interrupted, reselect the file and retry after one minute.</p>}

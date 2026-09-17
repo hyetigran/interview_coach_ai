@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from 'vitest';
+import { afterAll, beforeAll, expect, test, vi } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createProcessingModule, createBudgetLedger } from '../server/processing';
@@ -84,4 +84,41 @@ test('failed cancellation attempts do not starve later workflows, and invalidati
   const running = createProcessingModule({ DB: db, MEDIA: bucket }, async () => {}); await running.reconcile();
   await db.prepare("UPDATE reviews SET input_revision=2 WHERE id='job-invalidated'").run(); await running.reconcile();
   expect(await db.prepare("SELECT state,dispatch_state FROM processing_jobs WHERE id='job-invalidated'").first()).toMatchObject({ state: 'cancelled', dispatch_state: 'cancel_pending' });
+});
+
+test('overlapping video attempts cannot delete the winning derivative and invalid media releases admission', async () => {
+  const id = 'job-video-race'; await queued(id, 'owner-video-race');
+  await db.prepare("INSERT INTO uploads(id,owner_id,review_id,action_id,name,size,state,object_key,expires_at,created_at) VALUES(?,?,?,?,?,100,'validating',?,9999999999999,0)").bind(id, 'owner-video-race', id, 'action-video', 'source.mp4', 'video-source').run();
+  await bucket.put('video-source', new Uint8Array(100));
+  const wav = new Uint8Array(100); const view = new DataView(wav.buffer);
+  for (const [offset, text] of [[0,'RIFF'],[8,'WAVE'],[12,'fmt '],[36,'data']] as const) wav.set(new TextEncoder().encode(text), offset);
+  view.setUint32(4,92,true); view.setUint32(16,16,true); view.setUint16(20,1,true); view.setUint16(22,1,true); view.setUint32(24,16000,true); view.setUint32(28,32000,true); view.setUint16(32,2,true); view.setUint16(34,16,true); view.setUint32(40,56,true);
+  const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(wav));
+  let release!: () => void; const blocked = new Promise<void>(resolve => { release = resolve; });
+  let entered!: () => void; const firstPut = new Promise<void>(resolve => { entered = resolve; }); let calls = 0;
+  const originalPut = bucket.put.bind(bucket);
+  const observedBucket = new Proxy(bucket, { get(target, property) {
+    if (property === 'put') return async (key: string, body: ReadableStream, options: R2PutOptions) => { if (++calls === 1) { entered(); await blocked; } if (key.startsWith('audio/video-expiry/')) await db.prepare("UPDATE uploads SET expires_at=0 WHERE id='video-expiry'").run();
+      return originalPut(key, await new Response(body).arrayBuffer(), options); };
+    const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  try {
+    const module = createProcessingModule({ DB: db, MEDIA: observedBucket, LOCAL_MEDIA_ADAPTER: 'http://127.0.0.1:8790', AUTH_SECRET: 'test' }, async () => {});
+    await module.reconcile(); const older = module.prepare(id); const outcome = older.catch(error => error);
+    await Promise.race([firstPut, outcome.then(value => { throw value; })]); const winner = await module.prepare(id); release(); expect(await outcome).toBeInstanceOf(Error);
+    expect(await bucket.head(winner.audioKey!)).not.toBeNull(); expect(await bucket.head('video-source')).not.toBeNull();
+    expect(winner.sourceSha256).not.toBe(winner.sha256);
+    expect(await db.prepare('SELECT state,admitted_at FROM uploads WHERE id=?').bind(id).first()).toMatchObject({ state: 'admitted', admitted_at: expect.any(Number) });
+    await queued('video-expiry', 'video-expiry-owner'); await originalPut('expiry-source', new Uint8Array(100));
+    await db.prepare("INSERT INTO uploads(id,owner_id,review_id,action_id,name,size,state,object_key,expires_at,created_at) VALUES('video-expiry','video-expiry-owner','video-expiry','expiry','expiry.mp4',100,'validating','expiry-source',9999999999999,0)").run();
+    await module.reconcile(); await expect(module.prepare('video-expiry')).rejects.toThrow('cancelled or superseded');
+    expect((await module.status('video-expiry-owner', 'video-expiry'))?.state).not.toBe('ready');
+    expect(await db.prepare("SELECT admitted_at FROM uploads WHERE id='video-expiry'").first()).toEqual({ admitted_at: null });
+    await db.prepare("UPDATE processing_jobs SET deadline=0 WHERE id='video-expiry'").run(); await module.reconcile();
+    expect(await db.prepare("SELECT state,expires_at FROM uploads WHERE id='video-expiry'").first()).toEqual({ state: 'rejected', expires_at: 0 });
+    await queued('invalid-video', 'invalid-video-owner');
+    await db.prepare("INSERT INTO uploads(id,owner_id,review_id,action_id,name,size,state,object_key,expires_at,created_at) VALUES('invalid-video','invalid-video-owner','invalid-video','bad-video','bad.mp4',100,'validating','bad-source',9999999999999,0)").run();
+    await module.reconcile(); await module.fail('invalid-video', 'No audio track.');
+    expect(await db.prepare("SELECT state,admitted_at,expires_at FROM uploads WHERE id='invalid-video'").first()).toEqual({ state: 'rejected', admitted_at: null, expires_at: 0 });
+  } finally { release(); fetcher.mockRestore(); }
 });
