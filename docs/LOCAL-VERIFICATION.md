@@ -31,6 +31,8 @@ For the deterministic browser recovery cases, `.env` can contain a deliberately 
 
 The initial full browser run passed eight cases, skipped the opt-in transcription case and failed the stale earlier-advice fixture/assertion. The fixture previously returned no historical jobs, unlike the API. Local workerd also emitted intermittent hung-request and D1 internal-error diagnostics during that run; passing assertions do not prove these diagnostics are resolved. Record them when assessing longer live sessions.
 
+A second full run passed seven cases, skipped transcription, and exposed two failures: a transient server error before the correction editor loaded, and a saved-preparation recovery race. The latter allowed “Load latest” to replace a draft with cached text while a refresh was still pending. Answer and priority recovery now await a successful server refresh, disable editing during that operation, and preserve drafts if it fails. Browser regression cases force the refresh failure and then verify recovery after service resumes.
+
 ## Tested configuration
 
 The installed environment uses Node 22.19.0, Next 16.3.4, OpenNext Cloudflare 1.20.6, Wrangler 4.130.0, Miniflare 5.20260908.0-alpha and FFmpeg 8.1.2. See the lockfile for transitive versions. Source configuration selects `gpt-4o-transcribe-diarize` for transcription and `gpt-4.1-mini-2025-04-14` for grouping/coaching; no provider invocation is established by the deterministic checks above.

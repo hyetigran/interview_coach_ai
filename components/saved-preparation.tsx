@@ -23,32 +23,41 @@ export function FutureAnswerEditor({reviewId,jobId,proposal}:{reviewId:string;jo
  return <Button onClick={()=>{client.setQueryData<AnswerDraft[]>(draftKey,current=>current?.some(d=>d.jobId===jobId)?current:[...(current??[]),{jobId,proposal}]);document.getElementById('saved-preparation')?.scrollIntoView({behavior:'smooth'});}}>Edit future answer</Button>;
 }
 function AnswerForm({reviewId,jobId,initialText,saved}:{reviewId:string;jobId:string;initialText:string;saved?:SavedAnswer}) {
- const client=useQueryClient(),{key}=usePreparation(reviewId);
+ const client=useQueryClient(),{key,query}=usePreparation(reviewId);
  const [text,setText]=useState(saved?.text??initialText),[version,setVersion]=useState(saved?.version??0),[message,setMessage]=useState('');
  const conflict=(saved?.version??0)>version;
  const save=useMutation({mutationFn:()=>api<SavedAnswer>(`/api/reviews/${reviewId}/preparation`,{method:'POST',body:JSON.stringify({jobId,version,text})}),onSuccess:answer=>{
   setVersion(answer.version);setText(answer.text);setMessage('Future answer saved.');
   client.setQueryData<Preparation>(key,current=>current?{...current,answers:current.answers.some(a=>a.jobId===jobId&&a.version>answer.version)?current.answers:[answer,...current.answers.filter(a=>a.jobId!==jobId)]}:current);
  },onError:()=>{void client.invalidateQueries({queryKey:key});}});
+ const reload=useMutation({mutationFn:()=>query.refetch({throwOnError:true}),onSuccess:latest=>{
+  const answer=latest.data?.answers.find(a=>a.jobId===jobId);
+  if(!answer)return;
+  setVersion(answer.version);setText(answer.text);save.reset();setMessage('');
+ }});
  return <form className="space-y-2" onSubmit={event=>{event.preventDefault();save.mutate();}}>
-  <fieldset disabled={save.isPending} className="space-y-2"><label className="block">Your future answer<Textarea value={text} maxLength={10000} required onChange={e=>{setText(e.target.value);setMessage('');}} /></label>
+  <fieldset disabled={save.isPending||reload.isPending} className="space-y-2"><label className="block">Your future answer<Textarea value={text} maxLength={10000} required onChange={e=>{setText(e.target.value);setMessage('');}} /></label>
   <p className="text-sm">Preparation only. Saving does not change the transcript, verify new facts, or start analysis.</p>
   {conflict&&<p role="alert">A newer answer was saved elsewhere. Your draft is still here.</p>}
-  {(conflict||save.isError)&&<Button type="button" variant="outline" onClick={()=>{setVersion(saved?.version??0);setText(saved?.text??initialText);save.reset();setMessage('');}}>Load latest saved answer</Button>}
+  {(conflict||save.isError)&&<Button type="button" variant="outline" onClick={()=>reload.mutate()}>{reload.isPending?'Loading saved answer…':'Load latest saved answer'}</Button>}
   <Button type="submit" disabled={conflict||!text.trim()}>{save.isPending?'Saving…':'Save future answer'}</Button></fieldset>
-  {save.error&&<p role="alert">{save.error.message}</p>}{message&&<p role="status">{message}</p>}
+  {reload.error&&<p role="alert">Unable to load the latest answer. Your draft is preserved. Try again.</p>}{save.error&&<p role="alert">{save.error.message}</p>}{message&&<p role="status">{message}</p>}
  </form>;
 }
 function PrioritiesForm({reviewId,saved}:{reviewId:string;saved:Preparation['priorities']}) {
- const client=useQueryClient(),{key}=usePreparation(reviewId);
+ const client=useQueryClient(),{key,query}=usePreparation(reviewId);
  const [items,setItems]=useState(saved.items),[version,setVersion]=useState(saved.version),[message,setMessage]=useState('');
  const conflict=saved.version>version;
  const save=useMutation({mutationFn:()=>api<Preparation['priorities']>(`/api/reviews/${reviewId}/preparation`,{method:'PUT',body:JSON.stringify({version,items:items.map(s=>s.trim()).filter(Boolean)})}),onSuccess:next=>{setVersion(next.version);setItems(next.items);setMessage('Priorities saved.');client.setQueryData<Preparation>(key,current=>current?{...current,priorities:current.priorities.version>next.version?current.priorities:next}:current);},onError:()=>{void client.invalidateQueries({queryKey:key});}});
- return <form onSubmit={e=>{e.preventDefault();save.mutate();}} className="space-y-2"><fieldset disabled={save.isPending} className="space-y-2"><legend className="font-medium">Up to three preparation priorities</legend>
+ const reload=useMutation({mutationFn:()=>query.refetch({throwOnError:true}),onSuccess:latest=>{
+  if(!latest.data)return;
+  setItems(latest.data.priorities.items);setVersion(latest.data.priorities.version);save.reset();setMessage('');
+ }});
+ return <form onSubmit={e=>{e.preventDefault();save.mutate();}} className="space-y-2"><fieldset disabled={save.isPending||reload.isPending} className="space-y-2"><legend className="font-medium">Up to three preparation priorities</legend>
  {[0,1,2].map(i=><label className="block" key={i}>Priority {i+1}<Textarea maxLength={500} value={items[i]??''} onChange={e=>{setItems(Array.from({length:3},(_,j)=>j===i?e.target.value:items[j]??''));setMessage('');}}/></label>)}
  {conflict&&<p role="alert">Newer priorities were saved elsewhere. Your draft is still here.</p>}
- {(conflict||save.isError)&&<Button type="button" variant="outline" onClick={()=>{setItems(saved.items);setVersion(saved.version);save.reset();setMessage('');}}>Load latest priorities</Button>}
- <Button type="submit" disabled={conflict}>{save.isPending?'Saving…':'Save priorities'}</Button></fieldset>{save.error&&<p role="alert">{save.error.message}</p>}{message&&<p role="status">{message}</p>}</form>;
+ {(conflict||save.isError)&&<Button type="button" variant="outline" onClick={()=>reload.mutate()}>{reload.isPending?'Loading priorities…':'Load latest priorities'}</Button>}
+ <Button type="submit" disabled={conflict}>{save.isPending?'Saving…':'Save priorities'}</Button></fieldset>{reload.error&&<p role="alert">Unable to load the latest priorities. Your draft is preserved. Try again.</p>}{save.error&&<p role="alert">{save.error.message}</p>}{message&&<p role="status">{message}</p>}</form>;
 }
 function SavedEvidence({reviewId,answer}:{reviewId:string;answer:SavedAnswer}) {
  const [open,setOpen]=useState(false);
