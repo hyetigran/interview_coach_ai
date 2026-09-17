@@ -33,6 +33,8 @@ pnpm test:e2e
 
 Integration tests use real local D1 through Miniflare. Browser tests run the built application through Wrangler, including invitation, sign-in, create, reload, sign-out/sign-in, and deletion. Run local migrations and the Workers build before browser tests. Tests require loopback networking; no cloud credentials are required.
 
+For development-server checks and the 60-minute recording boundary, see [local verification evidence and remaining acceptance](docs/LOCAL-VERIFICATION.md). Local functional checks do not establish deployed readiness or independent coaching quality.
+
 ## Cloudflare deployment
 
 Preview and production use distinct Workers and D1 databases. The repository configuration contains the provisioned database IDs and exact application origins. Preview is deployed at https://interview-coach-preview.hyetigran.workers.dev; production has an isolated database and secret but the application has not been deployed there. Never bind preview to production storage.

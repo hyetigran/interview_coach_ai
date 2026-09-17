@@ -19,6 +19,25 @@ for (const [extension, video, audio] of [['mp4', 'libx264', 'aac'], ['mov', 'lib
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
 }
+test('extracts a full 60-minute video and rejects one second beyond the limit', { timeout: 120000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'coach-duration-test-'));
+  try {
+    const source = join(directory, 'source.mp4');
+    for (const seconds of [3600, 3601]) {
+      execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', `color=size=32x32:rate=1:duration=${seconds}`, '-f', 'lavfi', '-i', `anullsrc=r=16000:cl=mono:d=${seconds}`, '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-shortest', '-y', source], { timeout: 60000 });
+      if (seconds > 3600) {
+        await assert.rejects(extractAudio(source, directory, AbortSignal.timeout(30000)), /60 minutes/);
+      } else {
+        const result = await extractAudio(source, directory, AbortSignal.timeout(30000));
+        const bytes = await readFile(result.target);
+        assert.equal(result.bytes, 3600 * 16000 * 2 + 44);
+        assert.equal(bytes.length, result.bytes);
+        assert.equal(bytes.readUInt32LE(40), result.bytes - 44);
+        assert.equal(bytes.readUInt32LE(24), 16000);
+      }
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 test('rejects corrupt and no-audio recordings', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'coach-bad-format-'));
   try {
