@@ -2,6 +2,8 @@
 
 Status: preparation only. No candidate sessions or pilot outcomes have been recorded here. Ticket #16 remains open and depends on ticket #15. Use this protocol after deployed functional acceptance and the independent quality gate are documented; local test results alone do not authorize a pilot launch.
 
+Recruitment status: the five candidates have not yet been recruited. The current requested deliverable is these preparation materials; sessions and measured outcomes remain pending.
+
 ## Before the first session
 
 Record the deployed commit and Worker versions, environment, supported formats/byte limits, measured processing bounds, known limitations, and links to the #15 acceptance evidence and [independent evaluation report](../evaluation/report-template.md). Verify external-provider, Workflow and backup retention, plus deletion behavior, before intake. Record the actual reports, not merely links to blank templates.
