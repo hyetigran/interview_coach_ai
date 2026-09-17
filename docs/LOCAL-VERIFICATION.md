@@ -33,6 +33,8 @@ The initial full browser run passed eight cases, skipped the opt-in transcriptio
 
 A second full run passed seven cases, skipped transcription, and exposed two failures: a transient server error before the correction editor loaded, and a saved-preparation recovery race. The latter allowed “Load latest” to replace a draft with cached text while a refresh was still pending. Answer and priority recovery now await a successful server refresh, disable editing during that operation, and preserve drafts if it fails. Browser regression cases force the refresh failure and then verify recovery after service resumes.
 
+After the recovery fix, the final full development-server browser run passed all nine enabled cases in 2.8 minutes; the paid transcription case was skipped. App tests passed 146 cases with three opt-in provider skips, media tests passed nine cases, and the evaluation CLI passed three tests. Lint and type checking passed. Both standards and spec reviews found no material defects in this local increment. Earlier intermittent runtime errors remain an observation to investigate during longer sessions, rather than a claim of resolved runtime reliability.
+
 ## Tested configuration
 
 The installed environment uses Node 22.19.0, Next 16.3.4, OpenNext Cloudflare 1.20.6, Wrangler 4.130.0, Miniflare 5.20260908.0-alpha and FFmpeg 8.1.2. See the lockfile for transitive versions. Source configuration selects `gpt-4o-transcribe-diarize` for transcription and `gpt-4.1-mini-2025-04-14` for grouping/coaching; no provider invocation is established by the deterministic checks above.
