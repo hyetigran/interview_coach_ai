@@ -1,3 +1,4 @@
+import {providerConfigured} from './provider-configuration';
 import {mediaServiceRequest} from './media-service';
 import {accountSlotAvailable} from './account-slot';
 import {reconcileProviderBilling} from './historical-billing';
@@ -7,7 +8,7 @@ import { z } from 'zod';
 import { createBudgetLedger } from './budget';
 import type { PreparationResult } from './processing';
 import { parseTranscript, type Transcript } from '../lib/transcript';
-type Environment = Pick<CloudflareEnv, 'DB' | 'MEDIA' | 'AUTH_SECRET' | 'OPENAI_API_KEY' | 'LOCAL_MEDIA_ADAPTER' | 'MEDIA_PROCESSOR'>;
+type Environment = Pick<CloudflareEnv, 'DB' | 'MEDIA' | 'AUTH_SECRET' | 'OPENAI_API_KEY'|'OPENAI_JOBS_CONFIGURED' | 'LOCAL_MEDIA_ADAPTER' | 'MEDIA_PROCESSOR'>;
 type Row = { publication_retries:number; id: string; review_id: string; owner_id: string; job_id: string; revision: number; state: string; result_key: string | null; error: string | null; parent_id:string|null; publication_attempts:number; publication_deadline:number;paid_attempt:number };
 const active = "EXISTS(SELECT 1 FROM reviews WHERE reviews.id=transcriptions.review_id AND reviews.owner_id=transcriptions.owner_id AND reviews.lifecycle='active' AND reviews.input_revision=transcriptions.revision)";
 export function transcriptionIntent(db: D1Database, jobId: string) {
@@ -24,7 +25,7 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
     const used=await db.prepare("SELECT COALESCE(SUM(CASE WHEN state='reserved' THEN reserved_units ELSE COALESCE(settled_units,0) END),0) AS units FROM processing_budget").first<{units:number}>();
     const saved=['unknown','reconciliation','reconciliation_exhausted'].includes(row.state)?await env.MEDIA.head(`transcripts/${row.review_id}/${transcriptionAttemptId(row.id,row.paid_attempt)}.provider.json`):null;
     const step=recoveryPlan([{stage:'transcription',id:row.id,state:row.state,attempts:row.paid_attempt+1,receipt:saved?'complete':'none',billing:billing?.state??'none',maximumUnits:TRANSCRIPTION_RESERVATION,current:true}],50000000-(used?.units??0)).steps[0];
-    const paidRetry={canRetry:step.action==='retry'&&!!env.OPENAI_API_KEY,reason:!env.OPENAI_API_KEY?'Configure transcription access before retrying.':step.reason,maximumUnits:step.maximumUnits,attempt:row.paid_attempt};
+    const paidRetry={canRetry:step.action==='retry'&&providerConfigured(env),reason:!providerConfigured(env)?'Configure transcription access before retrying.':step.reason,maximumUnits:step.maximumUnits,attempt:row.paid_attempt};
     const retry=saved?{canRetry:row.state==='reconciliation_exhausted'&&row.publication_retries<2,reason:row.publication_retries>=2?'Saved transcription publication reached its three-window limit. The receipt is retained.':'Publish the saved transcription without another provider request.',maximumUnits:0,attempt:row.paid_attempt,publicationCycle:row.publication_retries}:paidRetry;
     return { id: row.id,retry, parentId:row.parent_id, revision:row.revision, state: row.state, error: row.error, transcript: object ? await object.json<Transcript>() : null };
   }

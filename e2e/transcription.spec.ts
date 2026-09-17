@@ -8,13 +8,15 @@ test('real OpenAI transcript survives leaving the page and supports timestamped 
   test.skip(!process.env.OPENAI_TEST_WAV, 'Explicit paid integration test requires a permitted OPENAI_TEST_WAV fixture.');
   test.setTimeout(300000);
   const email = `speech-${randomUUID()}@example.com`;
-  const invitation = execFileSync('node', ['scripts/invite.mjs', email], { encoding: 'utf8' }).trim().split('\n').at(-1)!;
-  const origin = 'http://127.0.0.1:3000';
+  const flags = process.env.E2E_PREVIEW_ORIGIN ? ['--remote', '--env', 'preview'] : [];
+  const invitation = execFileSync('node', ['scripts/invite.mjs', email, ...flags], { encoding: 'utf8' }).trim().split('\n').at(-1)!;
+  const origin = process.env.E2E_PREVIEW_ORIGIN ?? 'http://127.0.0.1:3000';
   const registration = await registerInvited(context.request, { headers: { origin, 'x-invitation-token': invitation }, data: { name: 'Synthetic Speech Test', email, password: randomUUID() + randomUUID() } });
   expect(registration.ok()).toBeTruthy();
   const creation = await context.request.post(origin + '/api/reviews', { headers: { origin }, data: { title: 'Synthetic two-speaker interview', role: 'Software engineer', origin: 'mock' } });
   expect(creation.ok()).toBeTruthy(); const review = await creation.json();
   const path = origin + '/api/reviews/' + review.id;
+  try {
   const bytes = readFileSync(process.env.OPENAI_TEST_WAV!);
   const initiation = await context.request.post(path + '/media', { headers: { origin }, data: { name: 'synthetic.wav', size: bytes.length, actionId: randomUUID() } });
   const upload = await initiation.json();
@@ -25,7 +27,7 @@ test('real OpenAI transcript survives leaving the page and supports timestamped 
   await page.goto('/reviews');
   await page.goto('/reviews/' + review.id);
   await expect(page.getByRole('heading', { name: 'Transcript', exact: true })).toBeVisible({ timeout: 120000 });
-  await expect(page.getByText(/event.driven service/i)).toBeVisible();
+  await expect(page.getByRole('paragraph').filter({hasText:/event.driven service/i})).toBeVisible();
   await page.reload(); await expect(page.getByRole('heading', { name: 'Transcript', exact: true })).toBeVisible();
   await page.getByRole('button', { name: /Play passage at/ }).last().click();
   const transcript = await (await context.request.get(path + '/transcript')).json();
@@ -51,4 +53,5 @@ test('real OpenAI transcript survives leaving the page and supports timestamped 
   await expect.poll(async()=> (await (await context.request.get(path+'/coaching')).json())?.state,{timeout:120000}).toMatch(/^(ready|partial)$/);
   const deletion = await context.request.delete(path, { headers: { origin }, data: {} }); expect([202,204]).toContain(deletion.status());
   expect((await context.request.get(path + '/transcript')).status()).toBe(404);
+  } finally { await context.request.delete(path, {headers:{origin},data:{}}); }
 });

@@ -36,6 +36,7 @@
       ],
       "vars": {
         "APP_ORIGIN": "https://interview-coach-preview.hyetigran.workers.dev",
+        "OPENAI_JOBS_CONFIGURED": "true",
         "RECORDING_ALLOWANCE": "3"
       },
       "r2_buckets": [

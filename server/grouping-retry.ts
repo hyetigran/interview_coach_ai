@@ -1,9 +1,10 @@
+import {providerConfigured} from './provider-configuration';
 import {accountSlotAvailable} from './account-slot';
 import {z} from 'zod';
 import {RecoveryError} from './recovery';
 import {createGroupingModule,GROUPING_RESERVATION} from './grouping';
 import {groupingAttemptId} from '../lib/grouping-attempt';
-type Environment=Pick<CloudflareEnv,'DB'|'MEDIA'|'OPENAI_API_KEY'>;
+type Environment=Pick<CloudflareEnv,'DB'|'MEDIA'|'OPENAI_API_KEY'|'OPENAI_JOBS_CONFIGURED'>;
 type Run={id:string;transcript_id:string;revision:number;output_version:number;total:number;state:string};
 type Chunk={publication_retries:number;id:string;ordinal:number;attempt:number;state:string;result:string|null;input_payload:string|null;billing:string|null};
 const stepsSchema=z.array(z.object({ordinal:z.number().int().nonnegative(),attempt:z.number().int().min(1).max(2)})).max(1000);
@@ -30,7 +31,7 @@ export function createGroupingRetry(env:Environment,dispatch?:Dispatch) {
   else if(run.state!=='partial'||rows.length!==run.total||suffix.some(row=>!['ready','failed','configuration','budget_blocked','reconciliation_exhausted'].includes(row.state))){canRetry=false;reason='Wait for active work or saved provider results to finish reconciliation.';}
   else if(suffix.some(row=>row.billing==='reserved')){canRetry=false;reason='A provider charge is unresolved. Its reservation stays held until reconciliation.';}
   else if(suffix.some(row=>row.attempt>=2)){canRetry=false;reason='A dependent section reached its three-attempt limit.';}
-  else if(!env.OPENAI_API_KEY){canRetry=false;reason='Configure provider access before retrying grouping.';}
+  else if(!providerConfigured(env)){canRetry=false;reason='Configure provider access before retrying grouping.';}
   else if((used?.units??0)+suffix.length*GROUPING_RESERVATION>50000000){canRetry=false;reason='The remaining processing allowance cannot cover the dependent sections.';}
   for(const row of suffix){if(canRetry&&row.state==='failed'&&await env.MEDIA.head(`grouping/${review}/${groupingAttemptId(row.id,row.attempt)}.provider.json`)){canRetry=false;reason='Publish the saved provider result before requesting another paid attempt.';}}
   return {run,rows,suffix,canRetry,reason,maximumUnits:suffix.length*GROUPING_RESERVATION};

@@ -113,7 +113,7 @@ test('grouping output changes fence in-flight coaching and retain earlier comple
 test('coaching retry reuses a valid draft and reserves only one new support check',async()=>{
  const review='coach-retry-verify',action=await ready(review),env={DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'};let calls=0;
  const module=createCoachingModule(env,async(_url,init)=>{calls++;return calls===2?new Response('Quota',{status:429}):coachResponse(init);});const [job]=await module.begin(action);await module.run(job);await module.finish(action);expect(calls).toBe(2);
- const sent:string[]=[],retry=createCoachingRetry(env,async id=>{sent.push(id);}),plan=(await retry.plan(review,review,job))!;
+ const sent:string[]=[],retry=createCoachingRetry({...env,OPENAI_API_KEY:undefined,OPENAI_JOBS_CONFIGURED:'true'},async id=>{sent.push(id);}),plan=(await retry.plan(review,review,job))!;
  expect(plan).toMatchObject({canRetry:true,reuseDraft:true,maximumUnits:450000});const input={actionId:crypto.randomUUID(),jobId:job,attempt:0};
  await Promise.all([retry.retry(review,review,input),retry.retry(review,review,input)]);expect(sent).toEqual([input.actionId]);
  const work=(await retry.work(input.actionId))!;await module.run(job,0);expect(calls).toBe(2);await module.run(job,work.attempt);await module.finish(work.runId);
