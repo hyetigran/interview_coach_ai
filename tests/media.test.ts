@@ -160,3 +160,25 @@ test('failed cleanup reports pending and does not starve later tombstones', asyn
   await cleaner.cleanup(); await cleaner.cleanup();
   expect((await db.prepare("SELECT cleaned_at FROM uploads WHERE id='fair-25'").first<{ cleaned_at: number }>())?.cleaned_at).toBeGreaterThan(0);
 });
+
+test('hosted R2 completion can omit metadata while the stored WAV remains valid', async () => {
+  const owner = 'remote-completion-owner';
+  const r = await review(owner); const bytes = wav(100);
+  const u = await upload(owner, r.id, bytes);
+  const bucket = await runtime.getR2Bucket('MEDIA') as unknown as R2Bucket;
+  const remoteShape = new Proxy(bucket, { get(target, prop) {
+    if (prop === 'resumeMultipartUpload') return (key: string, id: string) => {
+      const multipart = target.resumeMultipartUpload(key, id);
+      return { ...multipart, uploadPart: multipart.uploadPart.bind(multipart), abort: multipart.abort.bind(multipart), complete: async (parts: R2UploadedPart[]) => {
+        const result = await multipart.complete(parts);
+        // Observed on real preview R2: complete() omits HTTP metadata; HEAD has it.
+        return { ...result, httpMetadata: undefined };
+      } };
+    };
+    const value = Reflect.get(target, prop); return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const hosted = createMediaModule({DB:db,MEDIA:remoteShape,AUTH_SECRET:'isolated-media-test-secret'});
+  expect((await hosted.complete(owner,r.id,u.id)).state).toBe('admitted');
+  expect((await hosted.status(owner,r.id)).admitted).toBe(1);
+  expect(new Uint8Array(await (await hosted.play(owner,r.id,'bytes=0-43')).arrayBuffer())).toEqual(bytes.slice(0,44));
+});
