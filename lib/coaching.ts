@@ -9,12 +9,20 @@ export const coachingSchema=z.object({
   segments:z.array(z.object({kind:z.enum(['assertion','alternative']),text:z.string().min(1).max(2000),citations:z.array(citation).min(1).max(8)}).strict()).max(12),
   missingFacts:z.array(z.string().min(1).max(500)).max(5),limitations:z.array(z.string().min(1).max(500)).max(8),
 }).strict();
+export function coachingGenerationSchema(sources:CoachingSources) {
+ const ids=[...new Set([...sources.answers.map(s=>s.sourceId),...(sources.context??[]).filter(s=>s.kind==='background').map(s=>s.sourceId)])];
+ // Keep the enum within OpenAI's documented schema limits. Large threads still
+ // receive full evidence and use the same exact server-side citation validation.
+ if(ids.length>900||ids.join('').length>14000||ids.some(id=>/["\\]/.test(id)))return coachingSchema;
+ const allowed=ids.length?ids:['no_supported_personal_source'];
+ return coachingSchema.extend({segments:z.array(coachingSchema.shape.segments.element.extend({citations:z.array(citation.extend({sourceId:z.enum(allowed)})).min(1).max(8)})).max(12)});
+}
 export type CoachingSources={questions:(Evidence&{sourceId:string})[];answers:(Evidence&{sourceId:string})[];uncertain:boolean;incomplete:boolean;context?:ContextSource[];role?:string};
 export function coachingSources(root:QuestionGroup,groups:QuestionGroup[]):CoachingSources {
   const included=new Set([root.id]);let changed=true;
   while(changed){changed=false;for(const group of groups)if(group.parentId&&included.has(group.parentId)&&!included.has(group.id)){included.add(group.id);changed=true;}}
   const thread=groups.filter(g=>included.has(g.id));
-  const unique=(evidence:Evidence[])=>[...new Map(evidence.map(e=>{const sourceId=JSON.stringify([e.transcriptId,e.utteranceId,e.start,e.end]);return [sourceId,{...e,sourceId}];})).values()];
+  const unique=(evidence:Evidence[])=>[...new Map(evidence.map(e=>{const sourceId=encodeURIComponent(JSON.stringify([e.transcriptId,e.utteranceId,e.start,e.end]));return [sourceId,{...e,sourceId}];})).values()];
   return {questions:unique(thread.flatMap(g=>g.question)),answers:unique(thread.flatMap(g=>g.answers)),incomplete:false,uncertain:thread.some(g=>g.uncertain)};
 }
 export function unclearEvidence(evidence:Evidence) {return evidence.uncertain||/\[(?:inaudible|unintelligible|unclear)\]/i.test(evidence.quote);}

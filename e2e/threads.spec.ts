@@ -36,5 +36,9 @@ test('question threads open by keyboard and retain missing answers and uncertain
   await page.route(`**/api/reviews/${review.id}/coaching`,route=>route.fulfill({json:{state:'outdated',jobs:[]}}));
   await page.reload();await root.focus();await page.keyboard.press('Enter');
   await expect(page.getByText(/The source changed. This advice is outdated/)).toBeVisible();
+  let queuedPolls=0;await page.route(`**/api/reviews/${review.id}/coaching`,route=>{queuedPolls++;return route.fulfill({json:queuedPolls<3?{state:'queued',jobs:[]}:responses.coaching});});
+  await page.reload();await root.focus();await page.keyboard.press('Enter');
+  await expect(page.getByText(/Coaching is waiting for its processing slot/)).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Proposed future answer'})).toBeVisible({timeout:15000});
   await context.request.delete(`/api/reviews/${review.id}`,{headers:{origin},data:{}});
 });

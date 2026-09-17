@@ -25,7 +25,7 @@ export function createContextModule(db:D1Database) {
    db.prepare("UPDATE reviews SET role=?,coaching_revision=?,updated_at=? WHERE id=? AND owner_id=? AND lifecycle='active' AND coaching_revision=?").bind(value.context.role,next,Date.now(),review,owner,value.revision),
   ]);
   if(!result[2].meta.changes)throw new ContextError(409,'Context changed while saving. Reload before trying again.');
-  return get(owner,review);
+  return {id,revision:next,context:value.context};
  }
  return {get,save};
 }

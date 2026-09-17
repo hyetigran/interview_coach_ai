@@ -1,5 +1,5 @@
 import { expect,test } from 'vitest';
-import { resolveCoaching, coachingSources, COACHING_VERSIONS } from '../lib/coaching';
+import { resolveCoaching, coachingGenerationSchema, coachingSources, COACHING_VERSIONS } from '../lib/coaching';
 import { resolveGroups } from '../lib/threads';
 import type { Transcript } from '../lib/transcript';
 const transcript:Transcript={version:1,model:'gpt-4o-transcribe-diarize',audioSha256:'hash',durationMs:5000,utterances:[
@@ -27,4 +27,8 @@ test('new background assertions carry distinct provenance; job descriptions cann
  expect(()=>resolveCoaching({...alternative,segments:[{...alternative.segments[0],citations:[{sourceId:'ctx:2:job',quote:background.quote}]}]},selected)).toThrow();
  expect(()=>resolveCoaching(alternative,sources)).toThrow();
  expect(()=>resolveCoaching({...alternative,segments:[{...alternative.segments[0],citations:[quote]}]},selected)).toThrow();
+});
+
+test('the provider schema restricts personal citations to supplied answer IDs',()=>{
+ const schema=coachingGenerationSchema(sources);expect(()=>schema.parse({...proposal,segments:[{...proposal.segments[0],citations:[{sourceId:'v1',quote:quote.quote}]}]})).toThrow();expect(schema.parse(proposal).segments).toHaveLength(1);
 });
