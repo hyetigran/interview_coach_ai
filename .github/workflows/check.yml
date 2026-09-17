@@ -24,4 +24,7 @@ jobs:
       - run: pnpm db:migrate:local
       - run: pnpm exec playwright install --with-deps chromium
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # Recovery fixtures finish without provider requests, but their controls
+      # require a configured key. This invalid value cannot authorize paid calls.
+      - run: echo 'OPENAI_API_KEY=local-test-placeholder-not-a-provider-credential' >> .dev.vars
       - run: pnpm test:e2e
