@@ -34,8 +34,17 @@ test('deleted upload rejects its capability and scheduled cleanup removes late a
       `transcripts/${review.id}/transcript-prepare-${upload.id}.provider.json`];
     const file=join(folder,'synthetic-artifact');writeFileSync(file,'Synthetic late artifact; no recording or provider output.',{mode:0o600});
     for(const key of keys)execFileSync('pnpm',['exec','wrangler','r2','object','put',mediaBucket+'/'+key,...storageFlags,'--file',file],{stdio:'pipe',timeout:60000});
-    // Read each object back successfully: an arbitrary CLI failure cannot prove absence.
-    for(const [index,key] of keys.entries())execFileSync('pnpm',['exec','wrangler','r2','object','get',mediaBucket+'/'+key,...storageFlags,'--file',join(folder,'read-'+index)],{stdio:'pipe',timeout:60000});
+    // Every PUT above must succeed. The sweep may already have removed an object.
+    function objectExists(key:string) {
+      try {
+        execFileSync('pnpm',['exec','wrangler','r2','object','get',mediaBucket+'/'+key,...storageFlags,'--file',join(folder,'read-back')],{stdio:'pipe',timeout:60000});
+        return true;
+      } catch(error) {
+        if(error instanceof Error&&'stderr' in error&&/specified key does not exist|object does not exist|NoSuchKey/i.test(String(error.stderr)))return false;
+        throw error;
+      }
+    }
+    for(const key of keys)objectExists(key);
     for(const route of ['', '/audio','/transcript','/processing'])expect((await context.request.get(endpoint+route)).status()).toBe(404);
     const writtenAt=Date.now();
     const query=`SELECT cleaned_at FROM uploads WHERE id='${upload.id}' AND state='cleanup'`;
@@ -43,14 +52,9 @@ test('deleted upload rejects its capability and scheduled cleanup removes late a
       const rows=JSON.parse(execFileSync('pnpm',['exec','wrangler','d1','execute','DB',...databaseFlags,'--json','--command',query],{encoding:'utf8',timeout:60000}));
       return rows[0].results[0]?.cleaned_at??0;
     },{timeout:150000,intervals:[10000]}).toBeGreaterThan(writtenAt);
-    for(const key of keys){
-      let failure='';
-      try{execFileSync('pnpm',['exec','wrangler','r2','object','get',mediaBucket+'/'+key,...storageFlags,'--file',join(folder,'unexpected')],{stdio:'pipe',timeout:60000});}
-      catch(error){if(error instanceof Error&&'stderr' in error)failure=String(error.stderr);else throw error;}
-      expect(failure).toMatch(/specified key does not exist|object does not exist|NoSuchKey/i);
-    }
+    for(const key of keys)expect(objectExists(key)).toBe(false);
     expect((await(await context.request.get(endpoint+'/deletion')).json()).cleanupPending).toBe(false);
-    expect((await context.request.post(endpoint+'/processing',{headers:{origin},data:{actionId:randomUUID()}})).status()).toBe(404);
+    expect((await context.request.post(endpoint+'/processing',{headers:{origin},data:{actionId:randomUUID(),jobId:'prepare-'+upload.id,attempt:0}})).status()).toBe(404);
   } finally {
     await context.request.delete(endpoint,{headers:{origin},data:{},timeout:10000}).catch(()=>{});
     rmSync(folder,{recursive:true,force:true});

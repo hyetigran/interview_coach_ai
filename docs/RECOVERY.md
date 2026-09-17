@@ -39,7 +39,7 @@ The preview-only late-artifact check runs with
 `E2E_PREVIEW_ORIGIN=https://interview-coach-preview.hyetigran.workers.dev pnpm exec playwright test e2e/late-artifact-cleanup.spec.ts`.
 It deletes an unfinished multipart upload, verifies that its issued part capability
 and completion request are denied, then injects synthetic late original, derivative,
-and transcript/receipt objects into R2. It reads the objects back before waiting
-for the deployed scheduled tombstone sweep and checks explicit object-not-found
-responses afterward. This tests cleanup of late storage writes; it does not prove
+and transcript/receipt objects into R2. Every injected upload must succeed. Read-back accepts either the object or an
+explicit not-found response if cleanup already won the race. After the deployed
+scheduled tombstone sweep, every object must return explicit not-found. This tests cleanup of late storage writes; it does not prove
 cancellation of an actual in-flight transcription or coaching provider request.
