@@ -33,6 +33,7 @@ export const invitations = sqliteTable('invitations', {
   revoked: integer({ mode: 'boolean' }).notNull().default(false), consumedAt: integer('consumed_at'),
 });
 export const reviews = sqliteTable('reviews', {
+  coachingRevision: integer('coaching_revision').notNull().default(1),
   id: text().primaryKey(), ownerId: text('owner_id').notNull(), title: text().notNull(), role: text().notNull(),
   origin: text({ enum: ['hiring', 'mock'] }).notNull(),
   inputRevision: integer('input_revision').notNull().default(1),
@@ -68,6 +69,7 @@ export const transcriptions = sqliteTable('transcriptions', {
 });
 
 export const speakerConfirmations = sqliteTable('speaker_confirmations', {
+  contextRevision:integer('context_revision').notNull().default(1),
   id: text().primaryKey(), reviewId: text('review_id').notNull(), ownerId: text('owner_id').notNull(), transcriptId: text('transcript_id').notNull(),
   speakers: text().notNull(), revision: integer().notNull(), state: text().notNull().default('queued'), dispatchState: text('dispatch_state').notNull().default('pending'),
   confirmedAt: integer('confirmed_at').notNull(), deadline: integer().notNull().default(0), cancellationAttemptedAt: integer('cancellation_attempted_at'),
@@ -82,9 +84,12 @@ export const groupingChunks = sqliteTable('grouping_chunks', {
 },table=>[uniqueIndex('grouping_chunk_ordinal').on(table.runId,table.ordinal)]);
 
 export const coachingRuns = sqliteTable('coaching_runs',{
+ contextRevision:integer('context_revision').notNull().default(1),groupingId:text('grouping_id').notNull().default(''),dispatchState:text('dispatch_state').notNull().default('sent'),
  id:text().primaryKey(),reviewId:text('review_id').notNull(),ownerId:text('owner_id').notNull(),revision:integer().notNull(),state:text().notNull().default('running'),deadline:integer().notNull(),
  model:text().notNull(),promptVersion:text('prompt_version').notNull(),rubricVersion:text('rubric_version').notNull(),schemaVersion:text('schema_version').notNull(),verificationVersion:text('verification_version').notNull(),
-});
+},table=>[uniqueIndex('coaching_input_context').on(table.reviewId,table.revision,table.contextRevision)]);
 export const coachingJobs = sqliteTable('coaching_jobs',{
  id:text().primaryKey(),runId:text('run_id').notNull(),threadId:text('thread_id').notNull(),state:text().notNull().default('queued'),sources:text(),draft:text(),result:text(),error:text(),startedAt:integer('started_at'),draftDispatched:integer('draft_dispatched').notNull().default(0),verifyDispatched:integer('verify_dispatched').notNull().default(0),
 },table=>[uniqueIndex('coaching_thread').on(table.runId,table.threadId)]);
+
+export const reviewContextVersions=sqliteTable('review_context_versions',{id:text().primaryKey(),reviewId:text('review_id').notNull(),revision:integer().notNull(),body:text().notNull(),createdAt:integer('created_at').notNull()},table=>[uniqueIndex('context_review_revision').on(table.reviewId,table.revision)]);

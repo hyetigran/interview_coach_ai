@@ -19,3 +19,12 @@ test('uncertain essential questions withhold confident advice and preserve a foc
  const uncertain={...sources,questions:sources.questions.map(q=>({...q,uncertain:true}))};expect(()=>resolveCoaching(proposal,uncertain)).toThrow();
  const result=resolveCoaching({...proposal,outcome:'missing_facts',rationale:'Confirm the question wording before assessing coverage.',dimensions:[],segments:[],missingFacts:['What was the interviewer asking?']},uncertain);expect(result.outcome).toBe('missing_facts');
 });
+test('new background assertions carry distinct provenance; job descriptions cannot prove achievement',()=>{
+ const background={sourceId:'ctx:2:resume',contextId:'ctx:2',kind:'background' as const,label:'Selected resume',quote:'I built a service.',start:0,end:18};
+ const selected={...sources,context:[background,{...background,sourceId:'ctx:2:job',kind:'job' as const}]};
+ const alternative={...proposal,rationale:'This supplied service story addresses the project leadership question.',segments:[{kind:'alternative',text:'I built a service.',citations:[{sourceId:background.sourceId,quote:background.quote}]}]};
+ expect(resolveCoaching(alternative,selected).segments[0].citations[0]).toMatchObject({origin:'background',contextId:'ctx:2'});
+ expect(()=>resolveCoaching({...alternative,segments:[{...alternative.segments[0],citations:[{sourceId:'ctx:2:job',quote:background.quote}]}]},selected)).toThrow();
+ expect(()=>resolveCoaching(alternative,sources)).toThrow();
+ expect(()=>resolveCoaching({...alternative,segments:[{...alternative.segments[0],citations:[quote]}]},selected)).toThrow();
+});

@@ -1,3 +1,5 @@
+import {createContextModule,ContextError} from './review-context';
+import {createReanalysisModule} from './reanalysis';
 import { createCoachingModule } from './coaching';
 import { createGroupingModule } from './grouping';
 import { createRuntimeSpeakers, SpeakerError } from './speakers';
@@ -48,9 +50,15 @@ export function createApplication(env: CloudflareEnv) {
           }
           return json({ error: 'Method not allowed.' }, 405);
         }
-        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|transcript|speakers|threads|coaching|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
+        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|transcript|speakers|threads|coaching|context|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
         if (mediaPath) {
           const [, reviewId, action, uploadId, operation, part, sign] = mediaPath;
+          if (action === 'context') {
+            const context=createContextModule(env.DB);
+            if(request.method==='GET')return json(await context.get(session.user.id,reviewId));
+            if(request.method==='PUT')return json(await context.save(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,66000)))));
+          }
+          if(action==='coaching'&&request.method==='POST')return json(await createReanalysisModule(env).request(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,4096)))));
           if (action === 'coaching' && request.method === 'GET') {
             if (!await reviews.get(session.user.id, reviewId)) return json({ error: 'Review not found.' }, 404);
             return json(await createCoachingModule(env).status(session.user.id, reviewId));
@@ -96,6 +104,7 @@ export function createApplication(env: CloudflareEnv) {
         }
         return json({ error: 'Not found.' }, 404);
       } catch (error) {
+        if (error instanceof ContextError) return json({error:error.message},error.status);
         if (error instanceof SpeakerError) return json({ error: error.message }, error.status);
         if (error instanceof MediaError) return json({ error: error.message }, error.status);
         if (error instanceof ZodError) return json({ error: 'Check the supplied fields and try again.', fields: error.flatten().fieldErrors }, 400);

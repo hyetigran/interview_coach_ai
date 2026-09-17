@@ -33,7 +33,7 @@ function coachResponse(input:RequestInit|undefined) {
 test('publishes structurally resolved advice only after support verification; replay and ownership are safe',async()=>{
  const action=await ready('coach-success');let calls=0;const module=createCoachingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async(_url,init)=>{calls++;return coachResponse(init);});const [job]=await module.begin(action);
  await Promise.all([module.run(job),module.run(job)]);await module.finish(action);await module.run(job);
- const result=await module.status('coach-success','coach-success');expect(result?.state).toBe('ready');expect(result?.jobs[0].result?.outcome).toBe('preserve');expect(result?.jobs[0].result?.segments[0].citations[0].transcriptId).toBe('t-coach-success');expect(calls).toBe(2);expect(await module.status('other','coach-success')).toBeNull();
+ const result=await module.status('coach-success','coach-success');expect(result?.state).toBe('ready');expect(result?.jobs[0].result?.outcome).toBe('preserve');expect(result?.jobs[0].result?.segments[0].citations[0]).toMatchObject({transcriptId:'t-coach-success'});expect(calls).toBe(2);expect(await module.status('other','coach-success')).toBeNull();
 });
 test('an unsupported assertion fails verification and is withheld instead of repaired automatically',async()=>{
  const action=await ready('coach-unsupported');let calls=0;const module=createCoachingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async(_url,init)=>{calls++;return calls===2?response({supported:false,issues:['Unsupported ownership.']}):coachResponse(init);});const [job]=await module.begin(action);await module.run(job);await module.finish(action);

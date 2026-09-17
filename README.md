@@ -148,3 +148,20 @@ outdated; deletion removes retained advice, source snapshots and provider receip
 opt-in paid synthetic draft/support test and writes its cost rows under `/tmp`.
 The implementation uses the native Responses HTTP API with a shared bounded
 adapter; no client-side credential or third-party inference proxy is involved.
+
+Selected context (ticket #9) accepts an optional resume, job description and up to
+three experience stories. Documents are limited to 12,000 characters, stories to
+4,000, and the complete context to 64 KB. Each item must be explicitly selected
+for future generation. Job text can explain relevance but cannot support personal
+achievements; an alternative story requires selected-background citations and a
+question-fit rationale. Background citations are visibly distinguished from
+recorded interview speech.
+
+Saving role/context uses optimistic concurrency and a separate coaching revision:
+transcription and grouping remain valid, and no paid analysis starts from an edit.
+Use **Reanalyze coaching** after saving. Reanalysis persists its intent, reuses
+current work, waits for the account slot, and runs under the same shared allowance.
+The first automatic analysis uses the context revision captured at speaker
+confirmation; editing while grouping is underway requires explicit reanalysis.
+Excluding context changes future inputs. Earlier context snapshots remain for
+historical citations and saved work; whole-review deletion removes them.

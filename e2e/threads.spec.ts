@@ -27,7 +27,7 @@ test('question threads open by keyboard and retain missing answers and uncertain
   const root=page.locator('summary').filter({hasText:'What did you build?'});await root.focus();await page.keyboard.press('Enter');
   await expect(page.getByRole('heading',{name:'Original answer',exact:true})).toBeVisible();
   await expect(page.getByRole('heading',{name:'Proposed future answer'})).toBeVisible();
-  await expect(page.getByRole('heading',{name:'Supporting interview evidence'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Supporting evidence'})).toBeVisible();
   const follow=page.locator('summary').filter({hasText:'What would you change?'});await follow.focus();await page.keyboard.press('Enter');
   await expect(page.getByText('No supported answer was linked to this question.')).toBeVisible();
   await expect(page.getByText('This association is uncertain. Compare it with the transcript and audio.')).toBeVisible();

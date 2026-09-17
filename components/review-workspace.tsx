@@ -8,6 +8,7 @@ import type { Review, ReviewPage } from '@/lib/reviews/contracts';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ReviewContextEditor } from './review-context';
 import { AudioUpload } from '@/components/audio-upload';
 
 type Candidate = { id: string; name: string; email: string };
@@ -49,7 +50,7 @@ export function ReviewWorkspace({ reviewId }: { reviewId?: string }) {
       {detail.isPending && <p role="status" className="mt-6">Loading review…</p>}
       {detail.error && <p role="alert" className="mt-6">{detail.error.message}</p>}
       {deletion.data?.cleanupPending && <div className="mt-4"><p role="status">Access is blocked. Recording cleanup is still pending and will retry automatically.</p><Button onClick={() => remove.mutate()} disabled={remove.isPending}>Retry cleanup</Button></div>}
-      {detail.data && !deletionPending && <><h1 className="mt-6 text-3xl font-medium">{detail.data.title}</h1><p className="mt-3 text-muted-foreground">{detail.data.role} · {detail.data.origin === 'hiring' ? 'Hiring interview' : 'Mock interview'}</p><AudioUpload reviewId={reviewId} ownerId={me.data.id} /><Button variant="destructive" disabled={remove.isPending} onClick={() => { if (window.confirm('Delete this review? This cannot be undone.')) remove.mutate(); }}>{remove.isPending ? 'Deleting…' : 'Delete review'}</Button>{remove.error && <p role="alert" className="mt-3 text-destructive">{remove.error.message}</p>}</>}
+      {detail.data && !deletionPending && <><h1 className="mt-6 text-3xl font-medium">{detail.data.title}</h1><p className="mt-3 text-muted-foreground">{detail.data.role} · {detail.data.origin === 'hiring' ? 'Hiring interview' : 'Mock interview'}</p><ReviewContextEditor reviewId={reviewId} /><AudioUpload reviewId={reviewId} ownerId={me.data.id} /><Button variant="destructive" disabled={remove.isPending} onClick={() => { if (window.confirm('Delete this review? This cannot be undone.')) remove.mutate(); }}>{remove.isPending ? 'Deleting…' : 'Delete review'}</Button>{remove.error && <p role="alert" className="mt-3 text-destructive">{remove.error.message}</p>}</>}
     </section> : <div className="grid gap-12 py-12 md:grid-cols-2">
       <section><h1 className="text-3xl font-medium">Your reviews</h1><p className="mt-3 text-sm text-muted-foreground">A private place to reflect on past interviews.</p>
         {list.isPending && <p role="status" className="mt-6">Loading reviews…</p>}

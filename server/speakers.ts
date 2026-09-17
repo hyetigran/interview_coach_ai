@@ -18,7 +18,7 @@ export function createSpeakerModule(env: Environment, dispatch?: (id: string) =>
     const object = await env.MEDIA.get(transcript.result_key); if (!object) throw new SpeakerError(409,'The transcript is unavailable.');
     const document = transcriptSchema.parse(await object.json()); const labels = new Set(document.utterances.map(utterance => utterance.speaker).filter(Boolean));
     if (speakers.some(speaker => !labels.has(speaker))) throw new SpeakerError(400,'Select only speaker labels present in this transcript.');
-    await db.prepare("INSERT OR IGNORE INTO speaker_confirmations(id,review_id,owner_id,transcript_id,speakers,revision,confirmed_at) SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM reviews JOIN transcriptions ON reviews.id=transcriptions.review_id WHERE reviews.id=? AND reviews.owner_id=? AND reviews.lifecycle='active' AND reviews.input_revision=? AND transcriptions.id=? AND transcriptions.state='ready' AND transcriptions.revision=reviews.input_revision)").bind(value.actionId,review,owner,value.transcriptId,JSON.stringify(speakers),transcript.revision,Date.now(),review,owner,transcript.revision,value.transcriptId).run();
+    await db.prepare("INSERT OR IGNORE INTO speaker_confirmations(id,review_id,owner_id,transcript_id,speakers,revision,confirmed_at,context_revision) SELECT ?,?,?,?,?,?,?,(SELECT coaching_revision FROM reviews WHERE id=?) WHERE EXISTS(SELECT 1 FROM reviews JOIN transcriptions ON reviews.id=transcriptions.review_id WHERE reviews.id=? AND reviews.owner_id=? AND reviews.lifecycle='active' AND reviews.input_revision=? AND transcriptions.id=? AND transcriptions.state='ready' AND transcriptions.revision=reviews.input_revision)").bind(value.actionId,review,owner,value.transcriptId,JSON.stringify(speakers),transcript.revision,Date.now(),review,review,owner,transcript.revision,value.transcriptId).run();
     const saved = await status(owner,review);
     if (!saved || saved.transcriptId !== value.transcriptId || JSON.stringify(saved.speakers) !== JSON.stringify(speakers)) throw new SpeakerError(409,'A different confirmation was saved or the transcript changed. Reload to see the current selection.');
     await reconcile(); return await status(owner,review);
@@ -45,6 +45,6 @@ export function createSpeakerModule(env: Environment, dispatch?: (id: string) =>
   }
   return { status, confirm, reconcile, resume };
 }
-export function createRuntimeSpeakers(env: Environment & { CONTINUATION?: Workflow<{ confirmationId: string }> }) {
+export function createRuntimeSpeakers(env: Environment & { CONTINUATION?: Workflow<{ confirmationId: string; coachingRunId?: string }> }) {
   return createSpeakerModule(env, env.CONTINUATION ? async id => { await env.CONTINUATION!.createBatch([{ id: 'continue-'+id, params: { confirmationId: id } }]); } : undefined);
 }
