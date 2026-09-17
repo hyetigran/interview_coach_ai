@@ -16,6 +16,8 @@ Saved provider results have at most three publication attempts within 15 minutes
 
 Preparation dispatch has three attempts and a five-minute stage deadline once claimed. A failed preparation retains the account slot until cancellation succeeds. Confirmation and context-reanalysis dispatch also have three attempts with a one-minute lease; their stage deadlines remain five minutes and three hours respectively. Other explicit retry dispatches have three attempts; transcription and coaching retries expire within 15 minutes. Grouping dispatch expires after 15 minutes, while an admitted grouping plan has a three-hour processing deadline. HTTP retry endpoints persist intent and return `202`; the scheduled job Worker dispatches it. Dispatch retries reuse the same Workflow identity after a lost response. Late callbacks must match the current attempt and input dependencies before publication.
 
+Cancellation also completes when the Workflow instance is already absent. Both the local `instance.not_found` form and the deployed `(instance.not_found) Instance not found` form are recognized. Other service errors keep cancellation pending, so a transient lookup failure cannot release the account slot as though termination were confirmed.
+
 The local development command is `pnpm dev`. It reads `OPENAI_API_KEY` from the ignored `.env` file and synchronizes it to the ignored Wrangler secrets file. Apply local migrations with `pnpm db:migrate:local` before starting a checkout with new schema changes.
 
 ## Verification and remaining acceptance
