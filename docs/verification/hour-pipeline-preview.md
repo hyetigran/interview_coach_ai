@@ -35,5 +35,15 @@ candidate labels, or all loading/error states. A segment after 3500 seconds prov
 late-recording reach, not continuous coverage or correct attribution. Real
 permissioned recordings and independent evaluation remain outstanding.
 
-Execution results are pending. Do not treat the test's existence as a completed
-full-length acceptance check.
+The first preview audio probe uploaded all 22 parts (115,200,044 bytes) and
+prepared the 3600-second recording. Transcription reached `failed` with a zero
+settled transcription charge. A direct diagnostic using the same synthetic audio
+encoded as 32 kbps MP3 reproduced HTTP 400, `invalid_value`, with the message
+“Audio file might be corrupted or unsupported.” The same hour-long audio in AAC/M4A returned an explicit HTTP 400:
+“audio duration 3600.0 seconds is longer than 1400 seconds which is the maximum
+for this model.” Its diagnostic reservation settled to zero. A 20-minute MP3
+comparison lost its response to a client header timeout; its outcome is unknown
+and its $6 reservation remains held. Client-side chunking is required before this
+model can satisfy the 60-minute requirement. The browser test was interrupted after the persisted terminal failure;
+it did not complete the journey. Final committed assertions and video remain
+unverified. Do not treat the test's existence as completed full-length acceptance.

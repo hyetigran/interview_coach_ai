@@ -14,6 +14,7 @@ const active = "EXISTS(SELECT 1 FROM reviews WHERE reviews.id=transcriptions.rev
 export function transcriptionIntent(db: D1Database, jobId: string) {
   return db.prepare("INSERT OR IGNORE INTO transcriptions(id,review_id,owner_id,job_id,revision) SELECT 'transcript-'||id,review_id,owner_id,id,revision FROM processing_jobs WHERE id=? AND state='ready'").bind(jobId);
 }
+class TranscriptionRejection extends Error {}
 export function createTranscriptionModule(env: Environment, request: typeof fetch = fetch) {
   const db = env.DB; const budget = createBudgetLedger(db);
   async function live(id: string) { return db.prepare(`SELECT * FROM transcriptions WHERE id=? AND ${active}`).bind(id).first<Row>(); }
@@ -57,7 +58,7 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
       const response = await request('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, 'X-Client-Request-Id': call }, body: form, signal: AbortSignal.timeout(15 * 60000) });
       if (!response.ok) {
         if ([400, 401, 403, 413, 429].includes(response.status)) { await budget.settle(call, 0); submitted = false; }
-        throw new Error(response.status === 429 ? 'OpenAI quota or rate limit reached. Check the API project billing.' : 'OpenAI could not complete transcription.');
+        throw new TranscriptionRejection(response.status===429?'OpenAI quota or rate limit reached. Check the API project billing before retrying.':`The transcription provider rejected the prepared recording (HTTP ${response.status}). The original is retained; its format and duration need checking before retrying.`);
       }
       const raw = await response.text(); if (new TextEncoder().encode(raw).length > 8000000) throw new Error('Transcript response exceeds supported limits.');
       const receiptKey = `transcripts/${row.review_id}/${transcriptionAttemptId(id,row.paid_attempt)}.provider.json`;
@@ -68,8 +69,8 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
         if ((await live(id))?.paid_attempt!==row.paid_attempt) await env.MEDIA.delete(receiptKey);
       }
       await publish(row,audio,JSON.parse(raw),'submitting');
-    } catch {
-      await db.prepare(`UPDATE transcriptions SET state=?,error=?,finished_at=? WHERE id=? AND paid_attempt=? AND state IN ('encoding','submitting') AND ${active}`).bind(receiptSaved ? 'reconciliation' : submitted ? 'unknown' : 'failed', receiptSaved ? 'OpenAI returned a result, which is safely stored. Its format or billing needs reconciliation before publication.' : submitted ? 'The paid transcription outcome needs reconciliation. It will not be submitted again automatically.' : 'Transcription could not start. Check local services, API access, and billing.', Date.now(), id,row.paid_attempt).run();
+    } catch (error) {
+      await db.prepare(`UPDATE transcriptions SET state=?,error=?,finished_at=? WHERE id=? AND paid_attempt=? AND state IN ('encoding','submitting') AND ${active}`).bind(receiptSaved ? 'reconciliation' : submitted ? 'unknown' : 'failed', receiptSaved ? 'OpenAI returned a result, which is safely stored. Its format or billing needs reconciliation before publication.' : submitted ? 'The paid transcription outcome needs reconciliation. It will not be submitted again automatically.' : error instanceof TranscriptionRejection ? error.message : 'Transcription could not start. Check local services, API access, and billing.', Date.now(), id,row.paid_attempt).run();
     }
     finally {
       if(!submitted&&!receiptSaved)await db.prepare("UPDATE processing_budget SET state='settled',settled_units=0 WHERE id=? AND state='reserved' AND EXISTS(SELECT 1 FROM transcriptions WHERE id=? AND paid_attempt=? AND state IN ('failed','configuration','cancelled'))").bind(call,id,row.paid_attempt).run();

@@ -23,6 +23,18 @@ async function setup(id: string) {
 function adapter(paid: () => Promise<Response>): typeof fetch {
   return async input => String(input).includes('/compression/') ? new Response(new Uint8Array([1,2,3]), { headers: { 'content-length': '3' } }) : paid();
 }
+
+test.each([
+  [400,'The transcription provider rejected the prepared recording (HTTP 400). The original is retained; its format and duration need checking before retrying.'],
+  [429,'OpenAI quota or rate limit reached. Check the API project billing before retrying.'],
+])('known provider rejection %i keeps an actionable error without provider response content',async(status,message)=>{
+  const id='provider-rejection-'+status,env=await setup(id);
+  const module=createTranscriptionModule(env,adapter(async()=>Response.json({error:{message:'Untrusted provider content must not be exposed'}},{status})));
+  await module.run(id);
+  expect(await module.status(id,id)).toMatchObject({state:'failed',error:message});
+  expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind('transcript-'+id).first()).toEqual({state:'settled',settled_units:0});
+});
+
 test('concurrent starts submit once; immutable transcript replays without another charge and is owner-scoped', async () => {
   let calls = 0; const env = await setup('transcript-success');
   const module = createTranscriptionModule(env, adapter(async () => { calls++; return Response.json(provider, { headers: { 'x-request-id': 'req-test' } }); }));

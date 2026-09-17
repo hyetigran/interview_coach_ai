@@ -24,13 +24,15 @@ for(const kind of ['AUDIO','VIDEO'] as const){
       await page.goto('/reviews/'+review.id);
       await page.getByLabel('Interview recording file',{exact:true}).setInputFiles(source!);
       await page.getByRole('button',{name:'Upload recording',exact:true}).click();
-      await expect.poll(async()=>(await(await context.request.get(endpoint+'/processing')).json())?.state,{timeout:15*60000,intervals:[3000,10000]}).toBe('ready');
+      await expect.poll(async()=>(await(await context.request.get(endpoint+'/processing')).json())?.state,{timeout:15*60000,intervals:[3000,10000]}).toMatch(/^(ready|failed|cancelled)$/);
       const prepared=await(await context.request.get(endpoint+'/processing')).json();
+      expect(prepared.state,prepared.error??'Preparation must succeed').toBe('ready');
       expect(prepared.result.durationMs).toBe(3600000);
       if(kind==='VIDEO')expect(prepared.result.audioKey).not.toBe(prepared.result.sourceKey);
       await page.goto('/reviews');await page.goto('/reviews/'+review.id);
-      await expect.poll(async()=>(await(await context.request.get(endpoint+'/transcript')).json())?.state,{timeout:16*60000,intervals:[5000,10000]}).toBe('ready');
+      await expect.poll(async()=>(await(await context.request.get(endpoint+'/transcript')).json())?.state,{timeout:16*60000,intervals:[5000,10000]}).toMatch(/^(ready|failed|unknown|configuration|budget_blocked|reconciliation_exhausted|cancelled)$/);
       const transcript=await(await context.request.get(endpoint+'/transcript')).json();
+      expect(transcript.state,transcript.error??'Transcription must succeed').toBe('ready');
       expect(transcript.transcript.durationMs).toBe(3600000);
       expect(transcript.transcript.utterances.length).toBeGreaterThan(0);
       // A source with speech near the end is required; an excerpt-only result fails.
