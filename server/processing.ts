@@ -1,3 +1,4 @@
+import {mediaOutputForStorage} from './media-output';
 import {transcriptionAttemptId} from '../lib/transcription-attempt';
 import {mediaServiceRequest, type MediaServiceEnvironment} from './media-service';
 import {reconcileProviderBilling} from './historical-billing';
@@ -79,7 +80,7 @@ export function createProcessingModule(env: Environment, dispatch?: (id: string,
       if (!response.ok || !response.body) {const message=(await response.text()).slice(0,200)||'Video preparation failed.';throw response.status===422?new InvalidRecording(message):new Error(message);}
       await live(id,attempt);
       audioKey = 'audio/' + job.upload_id + '/' + crypto.randomUUID();
-      await bucket.put(audioKey, response.body, { httpMetadata: { contentType: 'audio/wav' } });
+      await bucket.put(audioKey, env.MEDIA_PROCESSOR ? mediaOutputForStorage(response) : response.body, { httpMetadata: { contentType: 'audio/wav' } });
       try { await live(id,attempt); } catch (error) { await bucket.delete(audioKey); throw error; }
     }
     const object = await bucket.get(audioKey);
