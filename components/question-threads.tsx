@@ -1,4 +1,5 @@
 'use client';
+import { CoachingCard } from './coaching-card';
 import { useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -22,6 +23,7 @@ export function QuestionThreads({reviewId}:{reviewId:string}) {
       {group.uncertain&&<p role="note">This association is uncertain. Compare it with the transcript and audio.</p>}
       <h4 className="font-medium">Question evidence</h4>{evidence(group.question)}
       <h4 className="font-medium">Original answer</h4>{group.answers.length?evidence(group.answers):<p>No supported answer was linked to this question.</p>}
+      {!group.parentId&&<CoachingCard reviewId={reviewId} threadId={group.id} />}
     </div>
   </details>{groups.some(g=>g.parentId===group.id)&&<div className="mt-3 pl-3"><h4>Follow-ups</h4><ol className="space-y-2">{groups.filter(g=>g.parentId===group.id).map(g=>thread(g))}</ol></div>}</li>;}
   return <section className="space-y-3" aria-labelledby="questions-heading"><h3 id="questions-heading" className="font-semibold">Question threads</h3>

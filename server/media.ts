@@ -1,3 +1,4 @@
+import { createCoachingModule } from './coaching';
 import { createGroupingModule } from './grouping';
 import { initialJobStatement, createRuntimeProcessing } from './processing';
 import { validateWave } from './audio-format';
@@ -129,6 +130,7 @@ export function createMediaModule(env: Environment) {
     ]);
     await db.prepare("UPDATE grouping_runs SET state='cancelled' WHERE review_id=? AND owner_id=?").bind(review,owner).run();
     await createGroupingModule(env).cleanup();
+    await createCoachingModule(env).cleanup();
     await db.prepare("UPDATE speaker_confirmations SET state='cancelled',speakers='[]' WHERE review_id=? AND owner_id=?").bind(review,owner).run();
     await db.prepare("UPDATE transcriptions SET state='cancelled',result_key=NULL,error=NULL WHERE review_id=? AND owner_id=?").bind(review, owner).run();
     const rows = (await db.prepare("SELECT * FROM uploads WHERE review_id=? AND owner_id=? AND state='cleanup'").bind(review, owner).all<Row>()).results;
