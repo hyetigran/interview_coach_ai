@@ -93,8 +93,11 @@ test('late dispatch after deletion is denied even before cancellation reaches th
   expect(service.startAndWaitForPorts).not.toHaveBeenCalled();
 });
 test('a lost media outcome blocks new attempt identities and account admission',async()=>{
-  const id=path(1).slice('/operations/'.length);
+  const id=path(6).slice('/operations/'.length);
+  const {service,forward}=processor();
+  forward.mockRejectedValueOnce(new Error('Lost container response'));
+  expect((await service.fetch(request(6))).status).toBe(502);
   await db.prepare('UPDATE processing_jobs SET attempt=1 WHERE id=?').bind(id).run();
-  expect(await reserveMediaAttempt(db,path(1)+'-prepare-attempt-1')).toBe(false);
-  expect(await db.prepare(`SELECT 1 AS allowed WHERE ${noUnresolvedProviders("'owner-1'")}`).first()).toBeNull();
+  expect(await reserveMediaAttempt(db,path(6)+'-prepare-attempt-1')).toBe(false);
+  expect(await db.prepare(`SELECT 1 AS allowed WHERE ${noUnresolvedProviders("'owner-6'")}`).first()).toBeNull();
 });

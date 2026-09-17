@@ -33,14 +33,19 @@ export class MediaProcessor extends Container<{DB: D1Database}> {
       const response = await this.ctx.container!.getTcpPort(8790).fetch(new Request(`http://localhost:8790${path}`, init));
       if (!response.body) { await this.destroy(); return response; }
       const reader = response.body.getReader();
+      let cancelled = false;
       let stopping: Promise<void> | undefined;
       const stop = () => stopping ??= this.destroy();
+      const complete = async () => {
+        await stop();
+        await this.env.DB.prepare("UPDATE processing_budget SET media_completed_at=? WHERE id=? AND operation='cloudflare-media-v1'").bind(Date.now(), 'media-'+path.slice(1).replace('/', '-')).run();
+      };
       return new Response(new ReadableStream({
         async pull(controller) {
-          try { const next = await reader.read(); if (next.done) { await stop(); controller.close(); } else controller.enqueue(next.value); }
+          try { const next = await reader.read(); if (next.done) { if (!cancelled) { await complete(); controller.close(); } } else controller.enqueue(next.value); }
           catch (error) { await stop(); controller.error(error); }
         },
-        async cancel(reason) { try { await reader.cancel(reason); } finally { await stop(); } },
+        async cancel(reason) { cancelled = true; try { await reader.cancel(reason); } finally { await stop(); } },
       }), {status:response.status,headers:response.headers});
     } catch { await this.destroy(); return new Response('Media processing failed. Retry after cancellation completes.', {status:502}); }
   }

@@ -58,7 +58,7 @@ export const processingJobs = sqliteTable('processing_jobs', {attempt:integer().
   revision: integer().notNull().default(1), state: text().notNull().default('queued'), dispatchState: text('dispatch_state').notNull().default('pending'),
   createdAt: integer('created_at').notNull(), deadline: integer().notNull().default(0), finishedAt: integer('finished_at'), error: text(), result: text(), cancellationAttemptedAt: integer('cancellation_attempted_at'),
 });
-export const processingBudget = sqliteTable('processing_budget', {reconciliationCheckedAt:integer('reconciliation_checked_at').notNull().default(0),
+export const processingBudget = sqliteTable('processing_budget', {mediaCompletedAt:integer('media_completed_at'),reconciliationCheckedAt:integer('reconciliation_checked_at').notNull().default(0),
   id: text().primaryKey(), operation: text().notNull(), reservedUnits: integer('reserved_units').notNull(), settledUnits: integer('settled_units'), state: text().notNull().default('reserved'),
 });
 

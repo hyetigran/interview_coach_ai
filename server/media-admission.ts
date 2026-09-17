@@ -18,7 +18,7 @@ export async function reserveMediaAttempt(db: D1Database, path: string) {
   const prefix = 'media-' + kind + '-' + id;
   await db.prepare(`INSERT OR IGNORE INTO processing_budget(id,operation,reserved_units)
     SELECT ?,'cloudflare-media-v1',100000 WHERE EXISTS(${eligible})
-    AND NOT EXISTS(SELECT 1 FROM processing_budget WHERE state='reserved' AND id<>? AND id IN (?,?,?))
+    AND NOT EXISTS(SELECT 1 FROM processing_budget WHERE state='reserved' AND media_completed_at IS NULL AND id<>? AND id IN (?,?,?))
     AND COALESCE((SELECT SUM(CASE WHEN state='reserved' THEN reserved_units ELSE COALESCE(settled_units,0) END) FROM processing_budget),0)+100000<=50000000`)
     .bind(key,...args,key,prefix,prefix+(extraction?'-prepare-attempt-1':'-attempt-1'),prefix+(extraction?'-prepare-attempt-2':'-attempt-2')).run();
   return !!await db.prepare(`SELECT id FROM processing_budget WHERE id=? AND state='reserved' AND operation='cloudflare-media-v1' AND EXISTS(${eligible})`).bind(key,...args).first();

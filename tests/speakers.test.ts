@@ -128,3 +128,17 @@ test('lost confirmation dispatch stops after three attempts and explicit retry g
  expect(calls).toBe(4);
  expect(await db.prepare('SELECT dispatch_attempts FROM speaker_confirmations WHERE id=?').bind(action.actionId).first()).toEqual({dispatch_attempts:1});
 });
+
+test('completed hosted compression retains its cost reservation and allows speaker continuation',async()=>{
+  const id='hosted-speakers';
+  const input=await setup(id);
+  const bill='media-compression-'+input.transcriptId;
+  await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units,media_completed_at) VALUES(?,'cloudflare-media-v1',100000,?)").bind(bill,Date.now()).run();
+  const calls:string[]=[];
+  const module=createSpeakerModule({DB:db,MEDIA:bucket},async id=>{calls.push(id);});
+  await module.confirm(id,id,input);
+  await module.reconcile();
+  expect(calls).toEqual([input.actionId]);
+  expect((await module.resume(input.actionId))?.speakers).toEqual(['A','C']);
+  expect(await db.prepare('SELECT state,reserved_units,settled_units FROM processing_budget WHERE id=?').bind(bill).first()).toEqual({state:'reserved',reserved_units:100000,settled_units:null});
+});
