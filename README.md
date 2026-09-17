@@ -70,3 +70,13 @@ Require a successful connected staging build before treating the selected deploy
 GitHub checks run on feature PRs and pushes to both `staging` and `main`. Set the preview Worker’s build branch to `staging`; do not connect its preview database to the production Worker.
 
 `pnpm build` produces the complete OpenNext Worker bundle, including `.open-next/.build/open-next.config.edge.mjs`. `pnpm build:next` runs only the underlying Next.js compiler and is not sufficient for Cloudflare deployment. OpenNext explicitly invokes `build:next` to avoid recursively invoking itself.
+
+## Local recording uploads
+
+Run `pnpm setup:local`, `pnpm db:migrate:local`, and `pnpm dev`. The MEDIA binding uses local R2; no cloud credentials or paid transcription are needed. The first supported format is standard-header PCM 16-bit WAV (mono/stereo, 8–48 kHz), up to 256 MiB and 60 minutes. Uploads use 5 MiB binary parts with a 24-hour reservation and five-minute part capabilities. Reselect the original file after interruption; saved part hashes prevent mixing recordings.
+
+`RECORDING_ALLOWANCE` defaults to three admissions per account. Reservations count while active; invalid or expired uploads release unused reservations. Deleting admitted media does not restore quota. Playback requires the signed-in owner and supports byte ranges. Review deletion immediately hides content, then removes media; a failed cleanup returns a visible pending state with retry.
+
+The Worker scheduled handler retries cleanup every 15 minutes. To exercise it locally after `pnpm build`, run `pnpm exec wrangler dev --test-scheduled` and request `/cdn-cgi/local/scheduled` on that local server. Local `next dev` also sweeps expired uploads when loading recording status. The configured remote R2 buckets are not yet provisioned; local validation is the current delivery priority.
+
+Run `E2E_DEV=1 pnpm test:e2e` to exercise the same upload/resume/playback/deletion flow against `next dev` itself.

@@ -38,3 +38,15 @@ export const reviews = sqliteTable('reviews', {
   lifecycle: text({ enum: ['active', 'deleting'] }).notNull().default('active'),
   createdAt: integer('created_at').notNull(), updatedAt: integer('updated_at').notNull(),
 }, t => [index('reviews_owner').on(t.ownerId, t.lifecycle, t.createdAt)]);
+
+export const uploads = sqliteTable('uploads', {
+  id: text().primaryKey(), ownerId: text('owner_id').notNull(), reviewId: text('review_id').notNull(),
+  actionId: text('action_id').notNull(), name: text().notNull(), size: integer().notNull(),
+  state: text().notNull().default('initializing'), objectKey: text('object_key').notNull().unique(),
+  multipartId: text('multipart_id'), expiresAt: integer('expires_at').notNull(), createdAt: integer('created_at').notNull(),
+  admittedAt: integer('admitted_at'), lockUntil: integer('lock_until').notNull().default(0), cleanedAt: integer('cleaned_at'), claimToken: text('claim_token'), cleanupAttemptedAt: integer('cleanup_attempted_at'),
+}, t => [index('uploads_owner').on(t.ownerId, t.state, t.expiresAt), index('uploads_review').on(t.reviewId)]);
+export const uploadParts = sqliteTable('upload_parts', {
+  id: text().primaryKey(), uploadId: text('upload_id').notNull(), number: integer().notNull(),
+  etag: text().notNull(), sha256: text().notNull(),
+}, t => [index('parts_upload').on(t.uploadId)]);

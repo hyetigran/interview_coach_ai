@@ -279,3 +279,11 @@ Before inviting candidates, verify the chosen identity/transcription/media/coach
 Use deterministic adapters for replay, concurrency, malformed output, timeout, and deletion tests. Use local D1/R2 and workflow testing where supported, plus isolated deployed smoke checks for upload/playback/provider behavior. Model and transcription quality require the PRD's permissioned recordings and independent review; passing application tests is not quality validation.
 
 Build authentication/provider-runtime feasibility first, then private intake and accounting, durable transcription/speaker confirmation, grouping/coaching with evidence, corrections/saved work, and finally the pilot plus quality evaluation. Recurring themes, live/practice interviewing, account-connected ingestion, video playback, and delivery assessment remain deferred.
+
+## Local-first implementation checkpoint
+
+The user has prioritized completing the application and validating local development before further cloud CI/CD work. A ticket's locally verified implementation may unblock the next ticket while remote acceptance remains explicitly outstanding.
+
+For the first audio slice, multipart parts use bounded binary requests (5 MiB maximum) through an owner-authorized Worker endpoint into private R2. Five-minute HMAC capabilities bind each request to its owner, review, upload, and part; the server stores immutable part hashes and R2 receipts. This deliberately replaces direct S3 presigning for the local slice so local R2 needs no cloud API keys. It does not send recordings through JSON bodies. Direct-to-R2 presigning remains a future transport optimization if needed; the lifecycle, quota, integrity, and deletion invariants remain server-owned.
+
+`worker.js` delegates app requests to OpenNext and runs cleanup every 15 minutes via a scheduled handler. Local status requests also reconcile expired reservations. Failed cleanup remains a tombstone and yields HTTP 202; retries and scheduled sweeps remove objects without restoring access. Upload rows retain opaque object keys and admitted counts after content deletion. Before any remote rollout, provision the declared private R2 buckets and retain incomplete-multipart lifecycle expiration to cover a process crash between R2 multipart creation and registration of its returned ID.

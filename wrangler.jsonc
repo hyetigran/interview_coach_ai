@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "interview-coach-local",
-  "main": ".open-next/worker.js",
+  "main": "worker.js",
   "compatibility_date": "2026-09-08",
   "compatibility_flags": [
     "nodejs_compat"
@@ -11,7 +11,8 @@
     "binding": "ASSETS"
   },
   "vars": {
-    "APP_ORIGIN": "http://127.0.0.1:3000"
+    "APP_ORIGIN": "http://127.0.0.1:3000",
+    "RECORDING_ALLOWANCE": "3"
   },
   "d1_databases": [
     {
@@ -32,7 +33,19 @@
         }
       ],
       "vars": {
-        "APP_ORIGIN": "https://interview-coach-preview.hyetigran.workers.dev"
+        "APP_ORIGIN": "https://interview-coach-preview.hyetigran.workers.dev",
+        "RECORDING_ALLOWANCE": "3"
+      },
+      "r2_buckets": [
+        {
+          "binding": "MEDIA",
+          "bucket_name": "interview-coach-preview-media"
+        }
+      ],
+      "triggers": {
+        "crons": [
+          "*/15 * * * *"
+        ]
       }
     },
     "production": {
@@ -46,8 +59,31 @@
         }
       ],
       "vars": {
-        "APP_ORIGIN": "https://interview-coach.hyetigran.workers.dev"
+        "APP_ORIGIN": "https://interview-coach.hyetigran.workers.dev",
+        "RECORDING_ALLOWANCE": "3"
+      },
+      "r2_buckets": [
+        {
+          "binding": "MEDIA",
+          "bucket_name": "interview-coach-production-media"
+        }
+      ],
+      "triggers": {
+        "crons": [
+          "*/15 * * * *"
+        ]
       }
     }
+  },
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "interview-coach-local-media"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/15 * * * *"
+    ]
   }
 }
