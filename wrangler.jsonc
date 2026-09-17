@@ -1,0 +1,53 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "interview-coach-local",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-09-08",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "APP_ORIGIN": "http://127.0.0.1:3000"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "interview-coach-local",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "env": {
+    "preview": {
+      "name": "interview-coach-preview",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "interview-coach-preview",
+          "migrations_dir": "drizzle",
+          "database_id": "59c3b2df-6882-4838-8bf6-73d674a26740"
+        }
+      ],
+      "vars": {
+        "APP_ORIGIN": "https://interview-coach-preview.hyetigran.workers.dev"
+      }
+    },
+    "production": {
+      "name": "interview-coach",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "interview-coach-production",
+          "migrations_dir": "drizzle",
+          "database_id": "6b9a1918-cd13-447b-8564-75d2b807bd04"
+        }
+      ],
+      "vars": {
+        "APP_ORIGIN": "https://interview-coach.hyetigran.workers.dev"
+      }
+    }
+  }
+}
