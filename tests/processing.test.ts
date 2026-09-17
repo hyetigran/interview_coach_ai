@@ -133,6 +133,19 @@ function retryWave(){
  for(const [offset,text] of [[0,'RIFF'],[8,'WAVE'],[12,'fmt '],[36,'data']] as const)wav.set(new TextEncoder().encode(text),offset);
  view.setUint32(4,92,true);view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,16000,true);view.setUint32(28,32000,true);view.setUint16(32,2,true);view.setUint16(34,16,true);view.setUint32(40,56,true);return wav;
 }
+test('replayed invalid preparation retains the original explanation without another adapter request',async()=>{
+ const id='invalid-replay',env=await retryVideo(id);
+ const request=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('This media attempt was already submitted.',{status:409}));
+ request.mockResolvedValueOnce(new Response('Recordings must contain audio and be no longer than 60 minutes.',{status:422}));
+ try{
+  const first=createProcessingModule(env,async()=>{});await first.reconcile();
+  await expect(first.prepare(id)).rejects.toThrow('60 minutes');
+  const replay=createProcessingModule(env);
+  await expect(replay.prepare(id)).rejects.toThrow('60 minutes');
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(await db.prepare('SELECT failure_kind,error FROM processing_jobs WHERE id=?').bind(id).first()).toEqual({failure_kind:'invalid',error:'Recordings must contain audio and be no longer than 60 minutes.'});
+ }finally{request.mockRestore();}
+});
 async function retryVideo(id:string){
  await queued(id,id);await bucket.put('source-'+id,new Uint8Array(100));
  await db.prepare("INSERT INTO uploads(id,owner_id,review_id,action_id,name,size,state,object_key,expires_at,created_at) VALUES(?,?,?,?,'source.mp4',100,'validating',?,9999999999999,0)").bind(id,id,id,id,'source-'+id).run();

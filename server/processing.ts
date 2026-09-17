@@ -56,7 +56,7 @@ export function createProcessingModule(env: Environment, dispatch?: (id: string,
   }
   async function prepare(id:string,attempt=0):Promise<PreparationResult> {
     try{return await prepareAttempt(id,attempt);}catch(error){
-      if(error instanceof InvalidRecording)await db.prepare("UPDATE processing_jobs SET failure_kind='invalid' WHERE id=? AND attempt=? AND state='running'").bind(id,attempt).run();
+      if(error instanceof InvalidRecording)await db.prepare("UPDATE processing_jobs SET failure_kind='invalid',error=? WHERE id=? AND attempt=? AND state='running'").bind(error.message.slice(0,200),id,attempt).run();
       throw error;
     }
   }
@@ -64,6 +64,7 @@ export function createProcessingModule(env: Environment, dispatch?: (id: string,
     const existing = await db.prepare(`SELECT result FROM processing_jobs WHERE id=? AND state='ready' AND ${active}`).bind(id).first<{ result: string }>();
     if (existing) return JSON.parse(existing.result);
     const job = await live(id,attempt);
+    if (job.failure_kind === 'invalid') throw new InvalidRecording(job.error ?? 'This recording is invalid. Export it again and start a new review.');
     const upload = await db.prepare("SELECT object_key,size,name FROM uploads WHERE id=? AND review_id=? AND state IN ('admitted','validating')").bind(job.upload_id, job.review_id).first<{ object_key: string; size: number; name: string }>();
     if (!upload) throw new Error('Recording is not available.');
     let audioKey = upload.object_key;
