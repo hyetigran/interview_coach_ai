@@ -3,19 +3,30 @@ import {AttributionCorrection,speakerName} from './attribution-correction';
 import {TranscriptCorrection,RefreshCorrectedAnalysis} from './transcript-correction';
 import { QuestionThreads } from './question-threads';
 import { SpeakerConfirmation } from './speaker-confirmation';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import type { Transcript } from '@/lib/transcript';
 import { Button } from './ui/button';
-type State = { id: string; revision:number; parentId?:string|null; state: string; error: string | null; transcript: Transcript | null } | null;
+type State = { retry?:{canRetry:boolean;reason:string;maximumUnits:number;attempt:number}; id: string; revision:number; parentId?:string|null; state: string; error: string | null; transcript: Transcript | null } | null;
 export function TranscriptView({ reviewId }: { reviewId: string }) {
+  const client=useQueryClient();
+  const retryAction=useRef<{target:string;actionId:string}|null>(null);
+  const retry=useMutation({mutationFn:async(state:NonNullable<State>)=>{
+    const target=state.id+':'+state.retry!.attempt;
+    if(retryAction.current?.target!==target)retryAction.current={target,actionId:crypto.randomUUID()};
+    return api(`/api/reviews/${reviewId}/recovery`,{method:'POST',body:JSON.stringify({actionId:retryAction.current.actionId,transcriptId:state.id,attempt:state.retry!.attempt})});
+  },onSettled:()=>client.invalidateQueries({queryKey:['transcript',reviewId]})});
   const audio = useRef<HTMLAudioElement>(null); const [page, setPage] = useState(0);
-  const query = useQuery({ queryKey: ['transcript', reviewId], queryFn: () => api<State>(`/api/reviews/${reviewId}/transcript`), structuralSharing:(previous,next)=>{const old=previous as State|undefined,value=next as State;return old&&value&&old.revision>value.revision?old:value;}, refetchInterval: query => !query.state.data || ['queued', 'encoding', 'submitting'].includes(query.state.data.state) ? 2000 : false });
+  const query = useQuery({ queryKey: ['transcript', reviewId], queryFn: () => api<State>(`/api/reviews/${reviewId}/transcript`), structuralSharing:(previous,next)=>{const old=previous as State|undefined,value=next as State;return old&&value&&old.revision>value.revision?old:value;}, refetchInterval: query => !query.state.data || ['queued', 'encoding', 'submitting', 'publishing', 'reconciliation'].includes(query.state.data.state) ? 2000 : false });
   if (query.error&&!query.data) return <p role="alert">Unable to load the transcript. Reload to retry.</p>;
   const state = query.data;
-  if (!state || ['queued', 'encoding', 'submitting'].includes(state.state)) return <p role="status" className="mt-4">Transcribing and identifying speakers… You can leave and return later.</p>;
-  if (state.state !== 'ready' || !state.transcript) return <p role="alert" className="mt-4">{state.error ?? 'Transcription is unavailable.'}</p>;
+  if (!state || ['queued', 'encoding', 'submitting', 'publishing'].includes(state.state)) return <p role="status" className="mt-4">Transcribing and identifying speakers… You can leave and return later.</p>;
+  if (state.state !== 'ready' || !state.transcript) return <div className="mt-4 space-y-3"><p role="alert">{state.error ?? 'Transcription is unavailable.'}</p>
+    {state.retry&&<p>{state.retry.reason}</p>}
+    {state.retry?.canRetry&&<><p>Reuse the prepared recording. This retry reserves ${(state.retry.maximumUnits/1000000).toFixed(2)} from the shared processing allowance.</p><Button disabled={retry.isPending} onClick={()=>retry.mutate(state)}>{retry.isPending?'Queuing retry…':'Retry transcription'}</Button></>}
+    {retry.error&&<p role="alert">{retry.error.message}</p>}
+  </div>;
   const utterances = state.transcript.utterances; const visible = utterances.slice(page * 100, (page + 1) * 100);
   return <section className="mt-6 space-y-4" aria-labelledby="transcript-heading">
     <h3 id="transcript-heading" className="font-semibold">Transcript</h3>

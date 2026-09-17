@@ -2,12 +2,17 @@
 import {GroupingCorrection} from './grouping-correction';
 import { CoachingCard } from './coaching-card';
 import { useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { Evidence, QuestionGroup } from '@/lib/threads';
 import { Button } from './ui/button';
-type State = {id?:string;transcriptId?:string;version?:number;previous?:{groups:QuestionGroup[];advice:{threadId:string;result:import('@/lib/coaching').CoachingResult}[]}|null;state:string;total:number;completed:number;errors:{section:number;error:string|null}[];groups:QuestionGroup[]} | null;
+type State = {retry?:{runId:string;version:number;canRetry:boolean;reason:string;maximumUnits:number;sections:number[]}|null;id?:string;transcriptId?:string;version?:number;previous?:{groups:QuestionGroup[];advice:{threadId:string;result:import('@/lib/coaching').CoachingResult}[]}|null;state:string;total:number;completed:number;errors:{section:number;error:string|null}[];groups:QuestionGroup[]} | null;
 export function QuestionThreads({reviewId}:{reviewId:string}) {
+  const client=useQueryClient(),retryAction=useRef<{target:string;id:string}|null>(null);
+  const retry=useMutation({mutationFn:(plan:NonNullable<NonNullable<State>['retry']>)=>{
+    const target=plan.runId+':'+plan.version;if(retryAction.current?.target!==target)retryAction.current={target,id:crypto.randomUUID()};
+    return api(`/api/reviews/${reviewId}/threads`,{method:'POST',body:JSON.stringify({actionId:retryAction.current.id,runId:plan.runId,version:plan.version})});
+  },onSettled:async()=>{await client.invalidateQueries({queryKey:['threads',reviewId]});await client.invalidateQueries({queryKey:['coaching',reviewId]});}});
   const audio=useRef<HTMLAudioElement>(null);
   const query=useQuery({queryKey:['threads',reviewId],queryFn:()=>api<State>(`/api/reviews/${reviewId}/threads`),refetchInterval:q=>!q.state.data||q.state.data.state==='running'?3000:false});
   if(query.error&&!query.data)return <p role="alert">Unable to load question threads. Reload to retry.</p>;
@@ -34,6 +39,8 @@ export function QuestionThreads({reviewId}:{reviewId:string}) {
     {state==='corrected'&&<p role="status">Your saved question grouping is retained. Refresh analysis when ready.</p>}
     {state==='running'&&<p role="status">Grouping questions: {completed} of {total} sections ready. You can leave and return later.</p>}
     {state==='partial'&&<p role="status">Some sections could not be grouped. Available threads and the full transcript remain accessible.</p>}
+    {state==='partial'&&query.data.retry&&<div className="space-y-2"><p>{query.data.retry.reason}</p>{query.data.retry.canRetry&&<><p>This retry reserves up to ${(query.data.retry.maximumUnits/1000000).toFixed(2)} for {query.data.retry.sections.length} sections. Unused reservations are released when a saved result can be reused.</p><Button disabled={retry.isPending} onClick={()=>retry.mutate(query.data!.retry!)}>{retry.isPending?'Queuing retry…':'Retry question grouping'}</Button></>}{retry.error&&<p role="alert">{retry.error.message}</p>}</div>}
+    {state==='running'&&query.data.retry&&<p>Earlier section results remain visible while their dependencies are rechecked. Earlier coaching may be outdated.</p>}
     {errors.map(error=><p key={error.section}>Section {error.section}: {error.error}</p>)}
     <p className="text-sm text-muted-foreground">Automatic groupings can be wrong. Playback starts at the source passage; word-level timing is unavailable. Logistics and candidate questions remain in the full transcript.</p>
     <audio ref={audio} controls preload="none" src={`/api/reviews/${reviewId}/audio`} aria-label="Question evidence playback" />

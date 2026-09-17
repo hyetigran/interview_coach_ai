@@ -1,3 +1,4 @@
+import {createPreparationRetry} from '../server/preparation-retry';
 import { afterAll, beforeAll, expect, test, vi } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -15,13 +16,14 @@ async function queued(id: string, owner: string) {
 }
 test('concurrent dispatch claims one account slot and recovers a lost response with the same workflow ID', async () => {
   await queued('job-a', 'owner-a'); await queued('job-b', 'owner-a');
-  const calls: string[] = [];
-  const module = createProcessingModule({ DB: db, MEDIA: bucket }, async id => { calls.push(id); if (calls.length === 1) throw new Error('Response lost after dispatch'); });
+  const calls: string[] = []; let canCancel=false;
+  const module = createProcessingModule({ DB: db, MEDIA: bucket }, async id => { calls.push(id); if (calls.length === 1) throw new Error('Response lost after dispatch'); },async()=>{if(!canCancel)throw new Error('Cancellation unavailable');});
   await Promise.all([module.reconcile(), module.reconcile()]);
   expect(new Set(calls).size).toBe(1);
   await module.reconcile(); expect(new Set(calls).size).toBe(1);
   await module.fail(calls[0], 'Synthetic failure'); await module.reconcile();
-  expect(new Set(calls).size).toBe(2);
+  expect(new Set(calls).size).toBe(1);
+  canCancel=true;await module.reconcile();expect(new Set(calls).size).toBe(2);
 });
 test('budget reservations are atomic and uncertain charges remain reserved', async () => {
   const ledger = createBudgetLedger(db);
@@ -56,14 +58,16 @@ test('preparation hashes actual audio and reuses its checkpoint; stale revisions
   await expect(module.prepare('job-valid')).rejects.toThrow();
 });
 
-test('an expired active job releases its slot and cannot resume publication', async () => {
+test('an expired active job releases its slot only after cancellation and cannot resume publication', async () => {
   await queued('job-timeout', 'owner-timeout'); await queued('job-next', 'owner-timeout');
-  const module = createProcessingModule({ DB: db, MEDIA: bucket }, async () => {}); await module.reconcile();
+  const module = createProcessingModule({ DB: db, MEDIA: bucket }, async () => {},async()=>{}); await module.reconcile();
   const active = await db.prepare("SELECT id FROM processing_jobs WHERE owner_id='owner-timeout' AND state='running'").first<{ id: string }>();
   await db.prepare('UPDATE processing_jobs SET deadline=0 WHERE id=?').bind(active!.id).run(); await module.reconcile();
   expect((await db.prepare('SELECT state FROM processing_jobs WHERE id=?').bind(active!.id).first<{ state: string }>())?.state).toBe('failed');
   await expect(module.prepare(active!.id)).rejects.toThrow();
-  expect((await db.prepare("SELECT COUNT(*) AS count FROM processing_jobs WHERE owner_id='owner-timeout' AND state='running'").first<{ count: number }>())?.count).toBe(1);
+  expect((await db.prepare("SELECT COUNT(*) AS count FROM processing_jobs WHERE owner_id='owner-timeout' AND state='running'").first<{ count: number }>())?.count).toBe(0);
+  await module.reconcile();
+expect((await db.prepare("SELECT COUNT(*) AS count FROM processing_jobs WHERE owner_id='owner-timeout' AND state='running'").first<{ count: number }>())?.count).toBe(1);
 });
 
 test('conflicting concurrent settlements cannot both succeed; identical retries are idempotent', async () => {
@@ -118,7 +122,66 @@ test('overlapping video attempts cannot delete the winning derivative and invali
     expect(await db.prepare("SELECT state,expires_at FROM uploads WHERE id='video-expiry'").first()).toEqual({ state: 'rejected', expires_at: 0 });
     await queued('invalid-video', 'invalid-video-owner');
     await db.prepare("INSERT INTO uploads(id,owner_id,review_id,action_id,name,size,state,object_key,expires_at,created_at) VALUES('invalid-video','invalid-video-owner','invalid-video','bad-video','bad.mp4',100,'validating','bad-source',9999999999999,0)").run();
-    await module.reconcile(); await module.fail('invalid-video', 'No audio track.');
+    await originalPut('bad-source',new Uint8Array(100));fetcher.mockResolvedValueOnce(new Response('No audio track.',{status:422}));
+    await module.reconcile();await expect(module.prepare('invalid-video')).rejects.toThrow('No audio track.'); await module.fail('invalid-video', 'No audio track.');
     expect(await db.prepare("SELECT state,admitted_at,expires_at FROM uploads WHERE id='invalid-video'").first()).toEqual({ state: 'rejected', admitted_at: null, expires_at: 0 });
   } finally { release(); fetcher.mockRestore(); }
+});
+
+function retryWave(){
+ const wav=new Uint8Array(100),view=new DataView(wav.buffer);
+ for(const [offset,text] of [[0,'RIFF'],[8,'WAVE'],[12,'fmt '],[36,'data']] as const)wav.set(new TextEncoder().encode(text),offset);
+ view.setUint32(4,92,true);view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,16000,true);view.setUint32(28,32000,true);view.setUint16(32,2,true);view.setUint16(34,16,true);view.setUint32(40,56,true);return wav;
+}
+async function retryVideo(id:string){
+ await queued(id,id);await bucket.put('source-'+id,new Uint8Array(100));
+ await db.prepare("INSERT INTO uploads(id,owner_id,review_id,action_id,name,size,state,object_key,expires_at,created_at) VALUES(?,?,?,?,'source.mp4',100,'validating',?,9999999999999,0)").bind(id,id,id,id,'source-'+id).run();
+ const media=new Proxy(bucket,{get(target,property){if(property==='put')return async(key:string,body:ReadableStream,options:R2PutOptions)=>target.put(key,await new Response(body).arrayBuffer(),options);const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;}});
+ return {DB:db,MEDIA:media,LOCAL_MEDIA_ADAPTER:'http://127.0.0.1:8790',AUTH_SECRET:'test'};
+}
+test('temporary preparation failure retains the upload and duplicate retries reuse one new attempt',async()=>{
+ const id='retry-video',env=await retryVideo(id),calls:string[]=[];
+ const processing=createProcessingModule(env,async(job,attempt)=>{if(job===id)calls.push(job+':'+attempt);},async()=>{});
+ const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response('Unavailable',{status:503})).mockImplementation(async()=>new Response(retryWave()));
+ try{
+  await processing.reconcile();await expect(processing.prepare(id)).rejects.toThrow('Unavailable');await processing.fail(id,'Unavailable');
+  expect(await db.prepare('SELECT state FROM uploads WHERE id=?').bind(id).first()).toEqual({state:'validating'});
+  const retry=createPreparationRetry(env,processing),input={actionId:crypto.randomUUID(),jobId:id,attempt:0};
+  await Promise.all([retry.retry(id,id,input),retry.retry(id,id,input)]);
+  expect(calls).toEqual([id+':0',id+':1']);
+  await expect(processing.prepare(id,0)).rejects.toThrow('no longer active');
+  await processing.fail(id,'Late failure from old attempt',0);expect((await processing.status(id,id))?.state).toBe('running');
+  const result=await processing.prepare(id,1);expect(result.bytes).toBe(100);
+  expect(await db.prepare('SELECT state,admitted_at FROM uploads WHERE id=?').bind(id).first()).toMatchObject({state:'admitted',admitted_at:expect.any(Number)});
+  await retry.retry(id,id,input);expect(calls).toHaveLength(2);
+ }finally{fetcher.mockRestore();}
+});
+test('preparation retries wait for confirmed cancellation and reject deleted or exhausted work',async()=>{
+ const id='retry-cancellation',env=await retryVideo(id),input={actionId:crypto.randomUUID(),jobId:id,attempt:0};
+ const processing=createProcessingModule(env,async()=>{},async()=>{throw new Error('Cancellation unavailable');});
+ await processing.reconcile();await processing.fail(id);await expect(createPreparationRetry(env,processing).retry(id,id,input)).rejects.toThrow('cancellation is pending');
+ expect(await db.prepare('SELECT attempt FROM processing_jobs WHERE id=?').bind(id).first()).toEqual({attempt:0});
+ await db.prepare("UPDATE processing_jobs SET attempt=2,dispatch_state='cancelled' WHERE id=?").bind(id).run();
+ await expect(createPreparationRetry(env,processing).retry(id,id,{...input,attempt:2})).rejects.toThrow('attempt limit');
+ await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(id).run();
+ await expect(createPreparationRetry(env,processing).retry(id,id,input)).rejects.toThrow('Review not found');
+});
+test('a delayed older preparation response cannot replace the retry result',async()=>{
+ const id='retry-delayed',env=await retryVideo(id);let release!:(value:Response)=>void,entered!:()=>void;
+ const waiting=new Promise<void>(resolve=>{entered=resolve;});let count=0;
+ const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async()=>{if(++count===1){entered();return new Promise<Response>(resolve=>{release=resolve;});}return new Response(retryWave());});
+ const processing=createProcessingModule(env,async()=>{},async()=>{});
+ try{
+  await processing.reconcile();const old=processing.prepare(id).catch(error=>error);await waiting;
+  await processing.fail(id,'Interrupted');await createPreparationRetry(env,processing).retry(id,id,{actionId:crypto.randomUUID(),jobId:id,attempt:0});
+  const winner=await processing.prepare(id,1);release(new Response(retryWave()));expect(await old).toBeInstanceOf(Error);
+  expect((await processing.status(id,id))?.result).toEqual(winner);expect(await bucket.head(winner.audioKey!)).not.toBeNull();
+ }finally{release?.(new Response(retryWave()));fetcher.mockRestore();}
+});
+test('lost preparation dispatch has a three-attempt bound and a deadline',async()=>{
+ const id='retry-dispatch-bound';await queued(id,id);let calls=0;
+ const processing=createProcessingModule({DB:db,MEDIA:bucket},async job=>{if(job===id){calls++;throw new Error('Lost response');}},async()=>{});
+ for(let attempt=0;attempt<5;attempt++){await db.prepare('UPDATE processing_jobs SET dispatch_started_at=0 WHERE id=?').bind(id).run();await processing.reconcile();}
+ expect(calls).toBe(3);await db.prepare('UPDATE processing_jobs SET deadline=0 WHERE id=?').bind(id).run();await processing.reconcile();
+ expect((await processing.status(id,id))?.state).toBe('failed');await expect(processing.prepare(id)).rejects.toThrow('no longer active');
 });

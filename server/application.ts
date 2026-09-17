@@ -1,3 +1,8 @@
+import {createCoachingRetry} from './coaching-retry';
+import {createGroupingRetry} from './grouping-retry';
+import {createPreparationRetry} from './preparation-retry';
+import {createTranscriptionRetry} from './transcription-retry';
+import {createRecoveryModule,RecoveryError} from './recovery';
 import {createGroupingCorrectionModule} from './grouping-corrections';
 import {createCorrectionModule,CorrectionError} from './transcript-corrections';
 import {createPreparationModule,PreparationError} from './preparation';
@@ -13,7 +18,7 @@ import { ZodError } from 'zod';
 import { createAuth } from './auth';
 import { invitations } from './schema';
 import { createReviewModule } from './reviews';
-import { createRuntimeProcessing } from './processing';
+import { createRuntimeProcessing,createProcessingModule } from './processing';
 import { createMediaModule, MediaError } from './media';
 import { PART_BYTES } from '../lib/media/contracts';
 
@@ -53,9 +58,10 @@ export function createApplication(env: CloudflareEnv) {
           }
           return json({ error: 'Method not allowed.' }, 405);
         }
-        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|transcript|speakers|threads|coaching|context|preparation|attribution|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
+        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|transcript|recovery|speakers|threads|coaching|context|preparation|attribution|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
         if (mediaPath) {
           const [, reviewId, action, uploadId, operation, part, sign] = mediaPath;
+          if(action==='recovery'&&request.method==='POST')return json(await createTranscriptionRetry(env).retry(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,4096)))),202);
           if(action==='preparation') {
             const preparation=createPreparationModule(env.DB);
             if(request.method==='GET'){const answer=new URL(request.url).searchParams.get('answer');return json(answer?await preparation.evidence(session.user.id,reviewId,answer):await preparation.get(session.user.id,reviewId));}
@@ -68,17 +74,22 @@ export function createApplication(env: CloudflareEnv) {
             if(request.method==='GET')return json(await context.get(session.user.id,reviewId));
             if(request.method==='PUT')return json(await context.save(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,66000)))));
           }
+          if(action==='coaching'&&request.method==='PATCH')return json(await createCoachingRetry(env).retry(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,4096)))),202);
           if(action==='coaching'&&request.method==='POST')return json(await createReanalysisModule(env).request(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,4096)))));
           if (action === 'coaching' && request.method === 'GET') {
             if (!await reviews.get(session.user.id, reviewId)) return json({ error: 'Review not found.' }, 404);
-            return json(await createCoachingModule(env).status(session.user.id, reviewId));
+            const status=await createCoachingModule(env).status(session.user.id, reviewId);
+            if(!status)return json(null);
+            const recovery=createCoachingRetry(env);return json({...status,jobs:await Promise.all(status.jobs.map(async job=>({...job,retry:['failed','configuration','budget_blocked','reconciliation_exhausted','unknown','withheld'].includes(job.state)?await recovery.plan(session.user.id,reviewId,job.id):null})))});
           }
+          if(action==='threads'&&request.method==='POST')return json(await createGroupingRetry(env).retry(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,4096)))),202);
           if (action === 'threads' && request.method === 'GET') {
             if (!await reviews.get(session.user.id, reviewId)) return json({ error: 'Review not found.' }, 404);
-            return json(await createGroupingModule(env).status(session.user.id, reviewId));
+            const status=await createGroupingModule(env).status(session.user.id, reviewId);return json(status?{...status,retry:await createGroupingRetry(env).plan(session.user.id,reviewId)}:null);
           }
           if (action === 'speakers') {
             if (!await reviews.get(session.user.id, reviewId)) return json({ error: 'Review not found.' }, 404);
+            if(request.method==='PATCH')return json(await createRecoveryModule({DB:env.DB,MEDIA:env.MEDIA}).retryConfirmation(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,4096)))),202);
             if (request.method === 'GET') return json(await createRuntimeSpeakers(env).status(session.user.id,reviewId));
             if (request.method === 'POST') return json(await createRuntimeSpeakers(env).confirm(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,16000)))));
           }
@@ -93,6 +104,7 @@ export function createApplication(env: CloudflareEnv) {
             if (!await reviews.get(session.user.id, reviewId)) return json({ error: 'Review not found.' }, 404);
             return json(await createTranscriptionModule(env).status(session.user.id, reviewId));
           }
+          if(action==='processing'&&request.method==='POST')return json(await createPreparationRetry(env,createProcessingModule(env)).retry(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,4096)))),202);
           if (action === 'processing' && request.method === 'GET') {
             if (!await reviews.get(session.user.id, reviewId)) return json({ error: 'Review not found.' }, 404);
             return json(await createRuntimeProcessing(env).status(session.user.id, reviewId));
@@ -121,6 +133,7 @@ export function createApplication(env: CloudflareEnv) {
         }
         return json({ error: 'Not found.' }, 404);
       } catch (error) {
+        if(error instanceof RecoveryError)return json({error:error.message},error.status);
         if (error instanceof CorrectionError) return json({error:error.message},error.status);
         if (error instanceof PreparationError) return json({error:error.message},error.status);
         if (error instanceof ContextError) return json({error:error.message},error.status);

@@ -1,3 +1,4 @@
+import {createGroupingRetry} from '../server/grouping-retry';
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -82,4 +83,73 @@ test('candidate-only windows still attach a long answer to a supplied prior ques
   let calls=0;const module=createGroupingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async()=>{calls++;return response({groups:[{...valid.groups[0],answers:[{utteranceId:calls===1?'u1':'u30',quote:valid.groups[0].answers[0].quote}]}]});});
   await module.begin(actionId);await speakers.resume(actionId);await module.runChunk(actionId,0);await module.runChunk(actionId,1);await module.finish(actionId);
   expect(calls).toBe(2);const status=await module.status('group-long-answer','group-long-answer');expect(status?.state).toBe('ready');expect(status?.groups).toHaveLength(1);expect(status?.groups[0].answers.map(a=>a.utteranceId)).toEqual(['u1','u30']);
+});
+test('saved grouping survives a failed database publication without another provider submission',async()=>{
+ const review='group-receipt',{actionId,speakers}=await setup(review);let fail=true,calls=0;
+ const failingDB=new Proxy(db,{get(target,property){if(property==='prepare')return(sql:string)=>{const statement=target.prepare(sql);if(!sql.startsWith("UPDATE grouping_chunks SET state='ready',result=?"))return statement;return{bind:(...values:unknown[])=>{const bound=statement.bind(...values);return{run:async()=>{if(fail){fail=false;throw new Error('Database publication failed');}return bound.run();}};}};};const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;}});
+ const module=createGroupingModule({DB:failingDB,MEDIA:bucket,OPENAI_API_KEY:'test'},async()=>{calls++;return response();});await module.begin(actionId);await speakers.resume(actionId);await module.runChunk(actionId,0);await module.finish(actionId);expect((await module.status(review,review))?.state).toBe('partial');
+ await Promise.all([module.recoverReceipt(actionId,0),module.recoverReceipt(actionId,0)]);expect(calls).toBe(1);expect((await module.status(review,review))?.state).toBe('ready');expect((await module.status(review,review))?.groups).toHaveLength(1);expect(await db.prepare('SELECT publication_attempts FROM grouping_chunks WHERE run_id=?').bind(actionId).first()).toEqual({publication_attempts:1});
+});
+test('grouping receipt recovery refuses changed prior evidence and deleted reviews',async()=>{
+ const review='group-receipt-context',{actionId,speakers}=await setup(review,48);let calls=0;const module=createGroupingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async()=>{calls++;return response({groups:[]});});await module.begin(actionId);await speakers.resume(actionId);await module.runChunk(actionId,0);await module.runChunk(actionId,1);await module.finish(actionId);
+ const source=(await module.status(review,review))!;expect(source.groups).toEqual([]);
+ await db.prepare("UPDATE grouping_chunks SET state='failed',result=NULL WHERE run_id=? AND ordinal=1").bind(actionId).run();
+ const transcript:import('../lib/transcript').Transcript={version:1,model:'gpt-4o-transcribe-diarize',audioSha256:'hash',durationMs:48000,utterances:Array.from({length:48},(_,i)=>({id:'u'+i,speaker:i%2?'B':'A',text:i%2?'I led the rollout with two engineers.':'Tell me about a project you led.',startMs:i*1000,endMs:(i+1)*1000,overlap:false}))};
+ const {resolveGroups}=await import('../lib/threads');await db.prepare("UPDATE grouping_chunks SET result=? WHERE run_id=? AND ordinal=0").bind(JSON.stringify(resolveGroups(valid,transcript,'t-'+review,['B'])),actionId).run();
+ await module.recoverReceipt(actionId,1);expect(calls).toBe(2);expect(await db.prepare('SELECT state,result FROM grouping_chunks WHERE run_id=? AND ordinal=1').bind(actionId).first()).toEqual({state:'reconciliation',result:null});
+ await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(review).run();await module.recoverReceipt(actionId,1);await module.cleanup();expect(await bucket.head(`grouping/${review}/group-${actionId}-1.provider.json`)).toBeNull();
+});
+
+test('explicit grouping retry reserves the suffix once and reuses an unchanged completed section',async()=>{
+ const review='group-retry-reuse',{actionId,speakers}=await setup(review,48),env={DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'};let calls=0;
+ const grouping=createGroupingModule(env,async()=>{calls++;return calls===1?new Response('Quota',{status:429}):response({groups:[]});});
+ await grouping.begin(actionId);await speakers.resume(actionId);await grouping.runChunk(actionId,0);await grouping.runChunk(actionId,1);await grouping.finish(actionId);expect(calls).toBe(2);
+ const sent:string[]=[],retry=createGroupingRetry(env,async id=>{sent.push(id);}),plan=(await retry.plan(review,review))!;
+ expect(plan.canRetry).toBe(true);expect(plan.sections).toEqual([1,2]);
+ const input={actionId:crypto.randomUUID(),runId:actionId,version:plan.version};await Promise.all([retry.retry(review,review,input),retry.retry(review,review,input)]);
+ expect(sent).toEqual([input.actionId]);
+ const work=(await retry.work(input.actionId))!;for(const step of work.steps)await grouping.runChunk(work.runId,step.ordinal,step.attempt);await grouping.finish(actionId);
+ expect(calls).toBe(3);expect((await grouping.status(review,review))?.state).toBe('ready');
+ expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind(`group-${actionId}-1-attempt-1`).first()).toEqual({state:'settled',settled_units:0});
+ expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(`group-${actionId}-0-attempt-1`).first()).toEqual({settled_units:200});
+ await retry.retry(review,review,input);expect(sent).toHaveLength(1);
+});
+test('retrying earlier grouping reprocesses a later section when its prior questions change',async()=>{
+ const review='group-retry-dependent',{actionId,speakers}=await setup(review,48),env={DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'};let calls=0;
+ const grouping=createGroupingModule(env,async()=>{calls++;return calls===1?new Response('Quota',{status:429}):calls===3?response():response({groups:[]});});
+ await grouping.begin(actionId);await speakers.resume(actionId);await grouping.runChunk(actionId,0);await grouping.runChunk(actionId,1);await grouping.finish(actionId);
+ const retry=createGroupingRetry(env),plan=(await retry.plan(review,review))!,input={actionId:crypto.randomUUID(),runId:actionId,version:plan.version};await retry.retry(review,review,input);
+ await grouping.runChunk(actionId,0,0);expect(calls).toBe(2);
+ const work=(await retry.work(input.actionId))!;for(const step of work.steps)await grouping.runChunk(work.runId,step.ordinal,step.attempt);await grouping.finish(actionId);expect(calls).toBe(4);
+ expect((await grouping.status(review,review))?.groups).toHaveLength(1);
+ expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(`group-${actionId}-1-attempt-1`).first()).toEqual({settled_units:200});
+});
+test('unknown grouping outcome blocks retry and deleted queued retries release their reservations',async()=>{
+ const review='group-retry-unknown',{actionId,speakers}=await setup(review),env={DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'};
+ const grouping=createGroupingModule(env,async()=>{throw new Error('Lost response');});await grouping.begin(actionId);await speakers.resume(actionId);await grouping.runChunk(actionId,0);await grouping.finish(actionId);
+ const retry=createGroupingRetry(env),plan=(await retry.plan(review,review))!;expect(plan.canRetry).toBe(false);
+ await expect(retry.retry(review,review,{actionId:crypto.randomUUID(),runId:actionId,version:plan.version})).rejects.toThrow('reconciliation');
+ const other='group-retry-deleted',fixture=await setup(other),otherGrouping=createGroupingModule(env,async()=>new Response('Quota',{status:429}));await otherGrouping.begin(fixture.actionId);await fixture.speakers.resume(fixture.actionId);await otherGrouping.runChunk(fixture.actionId,0);await otherGrouping.finish(fixture.actionId);
+ const p=(await retry.plan(other,other))!,input={actionId:crypto.randomUUID(),runId:fixture.actionId,version:p.version};await retry.retry(other,other,input);
+ await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(other).run();await retry.reconcile();expect(await retry.work(input.actionId)).toBeNull();
+ expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind(`group-${fixture.actionId}-0-attempt-1`).first()).toEqual({state:'settled',settled_units:0});
+ await expect(retry.retry(other,other,input)).rejects.toThrow('Review not found');
+});
+
+test('lost grouping retry dispatch reuses its identity and releases expired unsent reservations',async()=>{
+ const review='group-retry-dispatch',{actionId,speakers}=await setup(review),env={DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'};
+ const grouping=createGroupingModule(env,async()=>new Response('Quota',{status:429}));await grouping.begin(actionId);await speakers.resume(actionId);await grouping.runChunk(actionId,0);await grouping.finish(actionId);
+ const sent:string[]=[],retry=createGroupingRetry(env,async id=>{sent.push(id);throw new Error('Lost response');}),plan=(await retry.plan(review,review))!,input={actionId:crypto.randomUUID(),runId:actionId,version:plan.version};await retry.retry(review,review,input);
+ for(let i=0;i<5;i++){await db.prepare('UPDATE recovery_requests SET dispatch_started_at=0 WHERE id=?').bind(input.actionId).run();await retry.reconcile();}
+ expect(sent.filter(id=>id===input.actionId)).toEqual([input.actionId,input.actionId,input.actionId]);
+ await db.prepare('UPDATE recovery_requests SET created_at=0 WHERE id=?').bind(input.actionId).run();await retry.reconcile();expect(await retry.work(input.actionId)).toBeNull();
+ expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind(`group-${actionId}-0-attempt-1`).first()).toEqual({state:'settled',settled_units:0});
+ expect((await grouping.status(review,review))?.state).toBe('partial');
+});
+test('saved receipt input allows reuse of completed sections from before retry metadata existed',async()=>{
+ const review='group-retry-legacy',{actionId,speakers}=await setup(review,48),env={DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'};let calls=0;
+ const grouping=createGroupingModule(env,async()=>{calls++;return calls===1?new Response('Quota',{status:429}):response({groups:[]});});await grouping.begin(actionId);await speakers.resume(actionId);await grouping.runChunk(actionId,0);await grouping.runChunk(actionId,1);await grouping.finish(actionId);
+ await db.prepare('UPDATE grouping_chunks SET input_payload=NULL WHERE run_id=? AND ordinal=1').bind(actionId).run();
+ const retry=createGroupingRetry(env),plan=(await retry.plan(review,review))!,input={actionId:crypto.randomUUID(),runId:actionId,version:plan.version};await retry.retry(review,review,input);
+ const work=(await retry.work(input.actionId))!;for(const step of work.steps)await grouping.runChunk(work.runId,step.ordinal,step.attempt);await grouping.finish(actionId);expect(calls).toBe(3);
 });

@@ -5,10 +5,12 @@ import { useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import type { Transcript } from '@/lib/transcript';
 import { Button } from './ui/button';
-type Confirmation = { id: string; transcriptId: string; speakers: string[]; state: string } | null;
+type Confirmation = { id: string; transcriptId: string; speakers: string[]; state: string;canRetry?:boolean } | null;
 export function SpeakerConfirmation({ reviewId, transcriptId, transcript }: { reviewId: string; transcriptId: string; transcript: Transcript }) {
   const client = useQueryClient(); const key = ['speakers',reviewId,transcriptId]; const path = `/api/reviews/${reviewId}/speakers`;
   const query = useQuery({ queryKey: key, queryFn: () => api<Confirmation>(path), refetchInterval: query => ['queued','running'].includes(query.state.data?.state ?? '') ? 1500 : false });
+  const retryAction=useRef<{targetId:string;actionId:string}|null>(null);
+  const retry=useMutation({mutationFn:()=>{const targetId=query.data?.id;if(!targetId)throw new Error('Load your saved selection before retrying.');if(retryAction.current?.targetId!==targetId)retryAction.current={targetId,actionId:crypto.randomUUID()};return api(path,{method:'PATCH',body:JSON.stringify(retryAction.current)});},onSuccess:()=>client.invalidateQueries({queryKey:key}),onError:()=>{void client.invalidateQueries({queryKey:key});}});
   const [selected, setSelected] = useState<string[]>([]); const player = useRef<HTMLAudioElement>(null); const stopAt = useRef(0);
   const labels = [...new Set(transcript.utterances.map(u => u.speaker).filter((speaker): speaker is string => speaker !== null))];
   const mutation = useMutation({ mutationFn: () => api(path, { method: 'POST', body: JSON.stringify({ actionId: crypto.randomUUID(), transcriptId, speakers: selected }) }), onSuccess: () => client.invalidateQueries({ queryKey: key }) });
@@ -26,6 +28,8 @@ export function SpeakerConfirmation({ reviewId, transcriptId, transcript }: { re
     </fieldset>
     {!labels.length && <p>No identifiable speaker labels were returned. Coaching needs a confirmed candidate voice.</p>}
     {saved ? <p role="status">{saved.state === 'confirmed' ? 'Your voice is confirmed.' : ['queued','running'].includes(saved.state) ? 'Your selection is saved. Waiting to continue…' : 'Your selection is saved, but processing could not continue.'}</p> : <Button disabled={!selected.length || mutation.isPending || query.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? 'Saving…' : 'Confirm my voice'}</Button>}
+    {saved?.canRetry&&<Button type="button" disabled={retry.isPending} onClick={()=>retry.mutate()}>{retry.isPending?'Requesting retry…':'Retry saved voice confirmation'}</Button>}
+    {retry.error&&<p role="alert">{retry.error.message}</p>}
     {mutation.error && <p role="alert">{mutation.error.message}</p>}
   </section>;
 }

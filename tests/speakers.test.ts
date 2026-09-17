@@ -1,3 +1,5 @@
+import {createGroupingModule} from '../server/grouping';
+import {createRecoveryModule} from '../server/recovery';
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -19,6 +21,8 @@ test('confirmation persists multiple candidate labels before dispatch; lost deli
   const input = await setup('speaker-success'); const calls: string[] = [];
   const module = createSpeakerModule({ DB:db,MEDIA:bucket },async id => { expect((await module.status('speaker-success','speaker-success'))?.speakers).toEqual(['A','C']); calls.push(id); if(calls.length===1) throw new Error('Lost response'); });
   await module.confirm('speaker-success','speaker-success',input); await module.reconcile();
+  expect(calls).toHaveLength(1);
+  await db.prepare('UPDATE speaker_confirmations SET dispatch_started_at=0 WHERE id=?').bind(input.actionId).run();await module.reconcile();
   expect(new Set(calls).size).toBe(1); expect(calls).toHaveLength(2);
   const first = await module.resume(input.actionId); expect(first?.speakers).toEqual(['A','C']);
   expect(await module.resume(input.actionId)).toEqual(first);
@@ -70,4 +74,57 @@ test('invalidation immediately before the atomic resume cannot return attributio
     const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;
   }});
   expect(await createSpeakerModule({DB:invalidating,MEDIA:bucket}).resume(input.actionId)).toBeNull();
+});
+
+test('expired confirmation retries retain transcription and replay one persisted action',async()=>{
+ const review='speaker-retry',input=await setup(review),sent:string[]=[],speakers=createSpeakerModule({DB:db,MEDIA:bucket},async id=>{sent.push(id);});await speakers.confirm(review,review,input);await db.prepare('UPDATE speaker_confirmations SET deadline=0 WHERE id=?').bind(input.actionId).run();await speakers.reconcile();expect((await speakers.status(review,review))?.state).toBe('failed');
+ const recovery=createRecoveryModule({DB:db,MEDIA:bucket}),action={actionId:crypto.randomUUID(),targetId:input.actionId};await expect(recovery.retryConfirmation('other',review,action)).rejects.toThrow('Review not found');
+ await Promise.all([recovery.retryConfirmation(review,review,action),recovery.retryConfirmation(review,review,action)]);await speakers.reconcile();expect(sent).toEqual([input.actionId,action.actionId]);expect(await speakers.resume(input.actionId)).toBeNull();expect(await speakers.resume(action.actionId)).toMatchObject({transcriptId:input.transcriptId});
+ expect(await db.prepare('SELECT COUNT(*) AS count FROM transcriptions WHERE review_id=?').bind(review).first()).toEqual({count:1});expect(await db.prepare('SELECT retry_attempts FROM speaker_confirmations WHERE id=?').bind(action.actionId).first()).toEqual({retry_attempts:2});
+ await recovery.retryConfirmation(review,review,action);expect(sent).toHaveLength(2);
+});
+test('confirmation retry is bounded and revoked by deletion',async()=>{
+ const review='speaker-retry-bound',input=await setup(review),speakers=createSpeakerModule({DB:db,MEDIA:bucket},async()=>{});await speakers.confirm(review,review,input);await db.prepare("UPDATE speaker_confirmations SET state='failed',retry_attempts=3 WHERE id=?").bind(input.actionId).run();const recovery=createRecoveryModule({DB:db,MEDIA:bucket});await expect(recovery.retryConfirmation(review,review,{actionId:crypto.randomUUID(),targetId:input.actionId})).rejects.toThrow('three-attempt limit');
+ await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(review).run();await expect(recovery.retryConfirmation(review,review,{actionId:crypto.randomUUID(),targetId:input.actionId})).rejects.toThrow('Review not found');
+});
+
+test('confirmation can retry an expired, unsubmitted grouping intent without reviving its workflow',async()=>{
+ const review='speaker-grouping-expiry',input=await setup(review),speakers=createSpeakerModule({DB:db,MEDIA:bucket},async()=>{});
+ await speakers.confirm(review,review,input);
+ const grouping=createGroupingModule({DB:db,MEDIA:bucket});
+ expect(await grouping.begin(input.actionId)).toBeGreaterThan(0);
+ await db.prepare('UPDATE speaker_confirmations SET deadline=0 WHERE id=?').bind(input.actionId).run();await speakers.reconcile();
+ expect((await speakers.status(review,review))?.canRetry).toBe(true);
+ const action={actionId:crypto.randomUUID(),targetId:input.actionId};
+ await createRecoveryModule({DB:db,MEDIA:bucket}).retryConfirmation(review,review,action);
+ await speakers.reconcile();
+ expect(await speakers.resume(input.actionId)).toBeNull();
+ expect(await grouping.begin(input.actionId)).toBe(0);
+ expect(await grouping.begin(action.actionId)).toBeGreaterThan(0);
+ expect(await speakers.resume(action.actionId)).toMatchObject({transcriptId:input.transcriptId});
+ expect(await db.prepare('SELECT state FROM grouping_runs WHERE id=?').bind(input.actionId).first()).toEqual({state:'outdated'});
+});
+test.each(['result','submission','reservation'])('confirmation retry retains grouping with %s evidence',async evidence=>{
+ const review='speaker-grouping-'+evidence,input=await setup(review),speakers=createSpeakerModule({DB:db,MEDIA:bucket},async()=>{});
+ await speakers.confirm(review,review,input);await createGroupingModule({DB:db,MEDIA:bucket}).begin(input.actionId);
+ if(evidence==='result')await db.prepare("UPDATE grouping_chunks SET result='[]',state='ready' WHERE run_id=?").bind(input.actionId).run();
+ if(evidence==='submission')await db.prepare('UPDATE grouping_chunks SET submitted=1 WHERE run_id=?').bind(input.actionId).run();
+ if(evidence==='reservation')await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units,state) VALUES(?,'openai-grouping-v1',450000,'reserved')").bind('group-'+input.actionId+'-0').run();
+ await db.prepare('UPDATE speaker_confirmations SET deadline=0 WHERE id=?').bind(input.actionId).run();await speakers.reconcile();
+ expect((await speakers.status(review,review))?.canRetry).toBe(false);
+ await expect(createRecoveryModule({DB:db,MEDIA:bucket}).retryConfirmation(review,review,{actionId:crypto.randomUUID(),targetId:input.actionId})).rejects.toThrow('Existing analysis');
+ expect(await db.prepare('SELECT id FROM grouping_runs WHERE id=?').bind(input.actionId).first()).not.toBeNull();
+});
+
+test('lost confirmation dispatch stops after three attempts and explicit retry gets a fresh dispatch allowance',async()=>{
+ const review='speaker-dispatch-bound',input=await setup(review);let calls=0;
+ const speakers=createSpeakerModule({DB:db,MEDIA:bucket},async()=>{calls++;throw new Error('Lost dispatch');});
+ await speakers.confirm(review,review,input);
+ for(let i=0;i<5;i++){await db.prepare('UPDATE speaker_confirmations SET dispatch_started_at=0 WHERE id=?').bind(input.actionId).run();await speakers.reconcile();}
+ expect(calls).toBe(3);
+ await db.prepare('UPDATE speaker_confirmations SET deadline=0 WHERE id=?').bind(input.actionId).run();await speakers.reconcile();
+ const action={actionId:crypto.randomUUID(),targetId:input.actionId};
+ await createRecoveryModule({DB:db,MEDIA:bucket}).retryConfirmation(review,review,action);await speakers.reconcile();
+ expect(calls).toBe(4);
+ expect(await db.prepare('SELECT dispatch_attempts FROM speaker_confirmations WHERE id=?').bind(action.actionId).first()).toEqual({dispatch_attempts:1});
 });

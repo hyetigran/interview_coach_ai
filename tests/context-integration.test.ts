@@ -47,7 +47,7 @@ test('explicit reanalysis persists selected snapshot, deduplicates dispatch and 
  const action=await ready('context-rerun');const context=createContextModule(db),old=await context.get('context-rerun','context-rerun');await context.save('context-rerun','context-rerun',{revision:1,context:{...old.context,resume:{text:'I contributed to a migration.',selected:true}}});
  await db.prepare("INSERT INTO processing_jobs(id,review_id,owner_id,upload_id,state,created_at,deadline) VALUES('context-busy','context-rerun','context-rerun','context-busy-upload','running',0,9999999999999)").run();
  const calls:string[]=[];const reanalysis=createReanalysisModule({DB:db,MEDIA:bucket},async id=>{calls.push(id);if(calls.length===1)throw new Error('Lost dispatch reply');});const input={actionId:crypto.randomUUID(),contextRevision:2};
- await reanalysis.request('context-rerun','context-rerun',input);expect(calls).toHaveLength(0);await db.prepare("UPDATE processing_jobs SET state='ready' WHERE id='context-busy'").run();await reanalysis.reconcile();await reanalysis.reconcile();expect(new Set(calls).size).toBe(1);expect(calls).toHaveLength(2);
+ await reanalysis.request('context-rerun','context-rerun',input);expect(calls).toHaveLength(0);await db.prepare("UPDATE processing_jobs SET state='ready' WHERE id='context-busy'").run();await reanalysis.reconcile();await reanalysis.reconcile();expect(calls).toHaveLength(1);await db.prepare('UPDATE coaching_runs SET dispatch_started_at=0 WHERE id=?').bind(input.actionId).run();await reanalysis.reconcile();expect(new Set(calls).size).toBe(1);expect(calls).toHaveLength(2);
  const coaching=createCoachingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async(_url,init)=>coachResponse(init));const jobs=await coaching.begin(action,input.actionId);expect(jobs).toHaveLength(1);const source=JSON.parse((await db.prepare('SELECT sources FROM coaching_jobs WHERE id=?').bind(jobs[0]).first<{sources:string}>())!.sources);expect(source.context[0].contextId).toBe('context-rerun:context:2');
  for(const job of jobs)await coaching.run(job);await coaching.finish(input.actionId);await reanalysis.request('context-rerun','context-rerun',{...input,actionId:crypto.randomUUID()});expect(calls).toHaveLength(2);
 });
@@ -74,3 +74,33 @@ test.skipIf(process.env.OPENAI_CONTEXT_SMOKE!=='1')('real OpenAI coaching uses t
  try{await module.run(job);await module.finish(id);const status=await module.status('context-live','context-live');expect(['ready','partial']).toContain(status?.state);expect(['ready','withheld']).toContain(status?.jobs[0].state);if(status?.jobs[0].state==='ready')expect(status.jobs[0].result).not.toBeNull();else expect(status?.jobs[0].result).toBeNull();}
  finally{for(const stage of ['draft','verify']){const receipt=await bucket.get(`coaching/context-live/${job}-${stage}.provider.json`);if(receipt)writeFileSync(`/tmp/interviewcoach-context-${id}-${stage}.json`,await receipt.text(),{mode:0o600});}const rows=(await db.prepare('SELECT * FROM processing_budget WHERE id IN (?,?)').bind(job+'-draft',job+'-verify').all()).results;writeFileSync(`/tmp/interviewcoach-context-cost-${id}.json`,JSON.stringify(rows),{mode:0o600});}
 },240000);
+
+test('reanalysis dispatch retains one identity and stops after three lost deliveries',async()=>{
+ const review='context-dispatch-limit';await ready(review);let calls=0;
+ const module=createReanalysisModule({DB:db,MEDIA:bucket},async()=>{calls++;throw new Error('Lost reply');});
+ const input={actionId:crypto.randomUUID(),contextRevision:1};await module.request(review,review,input);
+ for(let i=0;i<5;i++){await db.prepare('UPDATE coaching_runs SET dispatch_started_at=0 WHERE id=?').bind(input.actionId).run();await module.reconcile();}
+ expect(calls).toBe(3);
+ await db.prepare('UPDATE coaching_runs SET deadline=0 WHERE id=?').bind(input.actionId).run();await module.reconcile();
+ expect(await db.prepare('SELECT state FROM coaching_runs WHERE id=?').bind(input.actionId).first()).toEqual({state:'partial'});
+ expect(calls).toBe(3);
+});
+
+test('expired reanalysis before job creation retries with a fresh identity and a finite allowance',async()=>{
+ const review='context-empty-recovery',group=await ready(review),env={DB:db,MEDIA:bucket};const calls:string[]=[];
+ const module=createReanalysisModule(env,async id=>{calls.push(id);});
+ const original={actionId:crypto.randomUUID(),contextRevision:1};await module.request(review,review,original);
+ await db.prepare('UPDATE coaching_runs SET deadline=0 WHERE id=?').bind(original.actionId).run();await module.reconcile();
+ const retry={actionId:crypto.randomUUID(),contextRevision:1};
+ const results=await Promise.all([module.request(review,review,retry),module.request(review,review,retry)]);
+ expect(results.every(row=>row.id===retry.actionId)).toBe(true);
+ expect(await createCoachingModule(env).begin(group,original.actionId)).toEqual([]);
+ expect(calls.filter(id=>id===retry.actionId)).toHaveLength(1);
+ await db.prepare('UPDATE coaching_runs SET deadline=0 WHERE id=?').bind(retry.actionId).run();await module.reconcile();
+ await module.request(review,review,retry);await module.request(review,review,original);expect(calls).toHaveLength(2);
+ const last={actionId:crypto.randomUUID(),contextRevision:1};await module.request(review,review,last);
+ await db.prepare('UPDATE coaching_runs SET deadline=0 WHERE id=?').bind(last.actionId).run();await module.reconcile();
+ await expect(module.request(review,review,{actionId:crypto.randomUUID(),contextRevision:1})).rejects.toThrow('three-attempt limit');
+ await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(review).run();
+ await expect(module.request(review,review,retry)).rejects.toThrow();
+});

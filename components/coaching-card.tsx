@@ -1,22 +1,28 @@
 'use client';
 import {FutureAnswerEditor} from './saved-preparation';
-import {useQuery} from '@tanstack/react-query';
+import {useQuery,useMutation,useQueryClient} from '@tanstack/react-query';
 import {useRef} from 'react';
 import {api} from '@/lib/api';
 import type {CoachingResult} from '@/lib/coaching';
 import {Button} from './ui/button';
-type State={state:string;jobs:{id:string;threadId:string;state:string;error:string|null;result:CoachingResult|null}[]}|null;
+type Retry={jobId:string;attempt:number;canRetry:boolean;reason:string;maximumUnits:number;reuseDraft:boolean};
+type State={state:string;error?:string|null;jobs:{retry?:Retry|null;id:string;threadId:string;state:string;error:string|null;result:CoachingResult|null}[]}|null;
 export function CoachingCard({reviewId,threadId}:{reviewId:string;threadId:string}) {
+ const client=useQueryClient(),action=useRef<{target:string;id:string}|null>(null);
+ const retry=useMutation({mutationFn:(plan:Retry)=>{
+  const target=plan.jobId+':'+plan.attempt;if(action.current?.target!==target)action.current={target,id:crypto.randomUUID()};
+  return api(`/api/reviews/${reviewId}/coaching`,{method:'PATCH',body:JSON.stringify({actionId:action.current.id,jobId:plan.jobId,attempt:plan.attempt})});
+ },onSettled:()=>client.invalidateQueries({queryKey:['coaching',reviewId]})});
  const audio=useRef<HTMLAudioElement>(null);
  const query=useQuery({queryKey:['coaching',reviewId],queryFn:()=>api<State>(`/api/reviews/${reviewId}/coaching`),refetchInterval:q=>!q.state.data||['queued','running'].includes(q.state.data.state)?3000:false});
  if(query.error)return <p role="alert">Unable to load coaching. Reload to retry.</p>;
  const state=query.data;if(!state)return <p role="status">Coaching will follow question grouping.</p>;
- if(state.state==='outdated')return <p role="status">The source changed. This advice is outdated; reanalysis is needed before using it.</p>;
- const job=state.jobs.find(j=>j.threadId===threadId);if(!job)return <p role="status">{['queued','running'].includes(state.state)?'Coaching is waiting for its processing slot or preparing this thread.':'No coaching result is available for this thread.'}</p>;
- if(['queued','preparing','generating','verifying'].includes(job.state))return <p role="status">Preparing and checking supported coaching… You can leave and return.</p>;
- if(!job.result)return <p role="status">{job.error??'Coaching is unavailable for this thread. The original evidence remains accessible.'}</p>;
+ const job=state.jobs.find(j=>j.threadId===threadId);if(!job)return <p role="status">{['queued','running'].includes(state.state)?'Coaching is waiting for its processing slot or preparing this thread.':state.error??'No coaching result is available for this thread.'}</p>;
+ if(['queued','preparing','generating','verifying','publishing'].includes(job.state))return <p role="status">Preparing and checking supported coaching… You can leave and return.</p>;
+ if(!job.result)return <div className="space-y-2"><p role="status">{job.error??'Coaching is unavailable for this thread. The original evidence remains accessible.'}</p>{job.retry&&<p>{job.retry.reason}</p>}{job.retry?.canRetry&&<><p>This retry reserves ${(job.retry.maximumUnits/1000000).toFixed(2)} from the shared allowance.</p><Button disabled={retry.isPending} onClick={()=>retry.mutate(job.retry!)}>{retry.isPending?'Queuing retry…':job.retry.reuseDraft?'Retry support check':'Retry coaching'}</Button></>}{retry.error&&<p role="alert">{retry.error.message}</p>}</div>;
  const result=job.result;
  return <section className="space-y-3 rounded-md bg-muted p-3" aria-label="Coaching suggestion">
+  {state.state==='outdated'&&<p role="status">Earlier advice: its source evidence changed. This saved result remains readable, but reanalysis is needed before using it.</p>}
   <h4 className="font-semibold">{result.outcome==='preserve'?'Keep this strength':result.outcome==='improve'?'Suggested improvement':'Facts needed before a suggestion'}</h4>
   <p>{result.rationale}</p>
   {result.segments.length>0&&<><h5 className="font-medium">{result.segments.some(s=>s.kind==='alternative')?'Alternative story for a future answer':'Proposed future answer'}</h5><p className="whitespace-pre-wrap">{result.segments.map(s=>s.text).join(' ')}</p><h5 className="font-medium">Supporting evidence</h5>

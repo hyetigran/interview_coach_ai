@@ -1,3 +1,7 @@
+import {createRuntimeCoachingRetry} from './server/coaching-retry';
+import {createRuntimeGroupingRetry} from './server/grouping-retry';
+import {createRuntimeTranscriptionRetry} from './server/transcription-retry';
+import {createCoachingModule} from './server/coaching';
 import {createReanalysisModule} from './server/reanalysis';
 import { createGroupingModule } from './server/grouping';
 import { createRuntimeSpeakers } from './server/speakers';
@@ -9,6 +13,6 @@ export { PreparationWorkflow } from './server/preparation-workflow';
 export default {
   fetch: () => new Response('Local job worker ready'),
   scheduled: (_controller: ScheduledController, env: CloudflareEnv, ctx: ExecutionContext) => {
-    ctx.waitUntil(Promise.all([createRuntimeProcessing(env).reconcile(), createMediaModule(env).cleanup(), createTranscriptionModule(env).cleanup(), createRuntimeSpeakers(env).reconcile(), createGroupingModule(env).cleanup(), createReanalysisModule(env).reconcile()]));
+    ctx.waitUntil(Promise.allSettled([createRuntimeCoachingRetry(env).reconcile(),createRuntimeGroupingRetry(env).reconcile(),createRuntimeTranscriptionRetry(env).reconcile(),createRuntimeProcessing(env).reconcile(), createMediaModule(env).cleanup(), createTranscriptionModule(env).reconcileReceipts(), createRuntimeSpeakers(env).reconcile(), createGroupingModule(env).reconcileReceipts(), createReanalysisModule(env).reconcile(),createCoachingModule(env).reconcileReceipts()]));
   },
 };
