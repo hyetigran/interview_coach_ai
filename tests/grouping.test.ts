@@ -60,3 +60,26 @@ test.skipIf(process.env.OPENAI_GROUPING_SMOKE!=='1')('real OpenAI structured gro
   try {await module.runChunk(actionId,0);await module.finish(actionId);const status=await module.status('group-live','group-live');expect(status?.state).toBe('ready');expect(status?.groups.length).toBeGreaterThan(0);}
   finally {const rows=(await db.prepare('SELECT * FROM processing_budget WHERE id=?').bind(`group-${actionId}-0`).all()).results;writeFileSync(`/tmp/interviewcoach-grouping-cost-${actionId}.json`,JSON.stringify(rows),{mode:0o600});}
 },120000);
+test('a Workflow-level timeout does not stop later sections or retain the account slot',async()=>{
+  const {runGroupingSections}=await import('../server/grouping-steps');
+  const {actionId,speakers}=await setup('group-step-timeout',48);const module=createGroupingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async()=>response({groups:[]}));await module.begin(actionId);await speakers.resume(actionId);
+  const step={do:async(name:string,...args:unknown[])=>{if(name==='group-section-0')throw new Error('Workflow runtime timeout');return await (args.at(-1) as ()=>Promise<unknown>)();}};
+  await runGroupingSections(step as Parameters<typeof runGroupingSections>[0],module,actionId,2);
+  const result=await module.status('group-step-timeout','group-step-timeout');expect(result?.state).toBe('partial');expect(result?.completed).toBe(1);expect(result?.errors).toHaveLength(1);
+});
+test('a parent reference outside supplied window and prior groups is rejected',async()=>{
+  const {actionId,speakers}=await setup('group-parent-provenance',48);const module=createGroupingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async()=>response({groups:[{question:[{utteranceId:'u24',quote:valid.groups[0].question[0].quote}],answers:[],parent:valid.groups[0].question[0],uncertain:false}]}));await module.begin(actionId);await speakers.resume(actionId);await module.interruptChunk(actionId,0);await module.runChunk(actionId,1);await module.finish(actionId);expect((await module.status('group-parent-provenance','group-parent-provenance'))?.groups).toHaveLength(0);
+});
+test('candidate-only speech never becomes an interviewer question or triggers a paid grouping call',async()=>{
+  const {actionId,speakers}=await setup('group-candidate-only',2);
+  await db.prepare("UPDATE speaker_confirmations SET speakers='[\"A\",\"B\"]' WHERE id=?").bind(actionId).run();
+  let calls=0;const module=createGroupingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async()=>{calls++;return response();});await module.begin(actionId);await speakers.resume(actionId);await module.runChunk(actionId,0);await module.finish(actionId);
+  expect(calls).toBe(0);expect((await module.status('group-candidate-only','group-candidate-only'))?.groups).toEqual([]);expect((await module.status('group-candidate-only','group-candidate-only'))?.state).toBe('ready');
+});
+test('candidate-only windows still attach a long answer to a supplied prior question',async()=>{
+  const {actionId,speakers}=await setup('group-long-answer',48);
+  const object=await bucket.get('document-group-long-answer');const doc=await object!.json<{utterances:{speaker:string;text:string}[]}>();doc.utterances.forEach((u,i)=>{if(i){u.speaker='B';u.text='I led the rollout with two engineers.';}});await bucket.put('document-group-long-answer',JSON.stringify(doc));
+  let calls=0;const module=createGroupingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async()=>{calls++;return response({groups:[{...valid.groups[0],answers:[{utteranceId:calls===1?'u1':'u30',quote:valid.groups[0].answers[0].quote}]}]});});
+  await module.begin(actionId);await speakers.resume(actionId);await module.runChunk(actionId,0);await module.runChunk(actionId,1);await module.finish(actionId);
+  expect(calls).toBe(2);const status=await module.status('group-long-answer','group-long-answer');expect(status?.state).toBe('ready');expect(status?.groups).toHaveLength(1);expect(status?.groups[0].answers.map(a=>a.utteranceId)).toEqual(['u1','u30']);
+});

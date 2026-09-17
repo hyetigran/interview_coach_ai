@@ -27,3 +27,9 @@ test('finite windows cover every source and overlap boundaries without modifying
   const source={...transcript,utterances:Array.from({length:99},(_,i)=>({...transcript.utterances[0],id:String(i)}))};
   const windows=groupingWindows(source);expect(new Set(windows.flatMap(w=>w.map(u=>u.id))).size).toBe(99);expect(windows[1][0].id).toBe('16');expect(windows.every(w=>w.length<=32)).toBe(true);
 });
+test('a unique clause and its complete question sentence share a stable overlap identity',()=>{
+  const source={...transcript,utterances:[{...transcript.utterances[0],text:'Tell me why you chose that design?'}]};
+  const a=resolveGroups({groups:[{...root,question:[ref('q','Tell me why you chose that design?')],answers:[]}]},source,'v1',['B']);
+  const b=resolveGroups({groups:[{...root,question:[ref('q','why you chose that design?')],answers:[]}]},source,'v1',['B']);
+  expect(a[0].id).toBe(b[0].id);expect(mergeGroups([...a,...b])).toHaveLength(1);
+});

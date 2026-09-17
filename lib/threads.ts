@@ -19,12 +19,25 @@ export function resolveGroups(input:unknown, transcript:Transcript, transcriptId
     if(source.speaker && candidateSpeakers.includes(source.speaker)!==(role==='answer')) throw new Error('Evidence has the wrong confirmed speaker role.');
     return {transcriptId,utteranceId:source.id,quote:ref.quote,start,end:start+ref.quote.length,startMs:source.startMs,endMs:source.endMs,position:source.position,uncertain:!source.speaker||source.overlap};
   }
+  function questionId(anchor:Evidence) {
+    const source=sources.get(anchor.utteranceId)!;
+    // Identity uses the containing source sentence, while displayed evidence keeps
+    // the exact model-selected quote. Full sentences and unique clauses therefore
+    // refer to the same question across overlapping windows.
+    let sentenceStart=0;
+    for(const match of source.text.matchAll(/[.!?]\s+|\n+/g)) {
+      const boundary=match.index+match[0].length;
+      if(boundary>anchor.start) break;
+      sentenceStart=boundary;
+    }
+    return JSON.stringify([anchor.transcriptId,anchor.utteranceId,sentenceStart]);
+  }
   return groupingSchema.parse(input).groups.map(group=>{
     const question=group.question.map(q=>resolve(q,'question')).sort(compare), answers=group.answers.map(a=>resolve(a,'answer')).sort(compare);
     const parent=group.parent?resolve(group.parent,'question'):null;
     // Strictly earlier parent anchors make cycles impossible, including across windows.
-    if(parent && compare(parent,question[0])>=0) throw new Error('Follow-up parent must precede its question.');
-    return {id:anchorId(question[0]),question,answers,parentId:parent?anchorId(parent):null,uncertain:group.uncertain||[...question,...answers].some(a=>a.uncertain)||answers.some(a=>compare(a,question[0])<0)};
+    if(parent && (compare(parent,question[0])>=0 || questionId(parent)===questionId(question[0]))) throw new Error('Follow-up parent must precede its question.');
+    return {id:questionId(question[0]),question,answers,parentId:parent?questionId(parent):null,uncertain:group.uncertain||[...question,...answers].some(a=>a.uncertain)||answers.some(a=>compare(a,question[0])<0)};
   });
 }
 export function mergeGroups(groups:QuestionGroup[]):QuestionGroup[] {
