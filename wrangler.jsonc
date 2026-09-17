@@ -1,0 +1,132 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "interview-coach-local",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-08",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "LOCAL_MEDIA_ADAPTER": "http://127.0.0.1:8790",
+    "APP_ORIGIN": "http://127.0.0.1:3000",
+    "RECORDING_ALLOWANCE": "3"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "interview-coach-local",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "env": {
+    "preview": {
+      "name": "interview-coach-preview",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "interview-coach-preview",
+          "migrations_dir": "drizzle",
+          "database_id": "59c3b2df-6882-4838-8bf6-73d674a26740"
+        }
+      ],
+      "vars": {
+        "APP_ORIGIN": "https://interview-coach-preview.hyetigran.workers.dev",
+        "RECORDING_ALLOWANCE": "3"
+      },
+      "r2_buckets": [
+        {
+          "binding": "MEDIA",
+          "bucket_name": "interview-coach-preview-media"
+        }
+      ],
+      "triggers": {
+        "crons": [
+          "*/15 * * * *"
+        ]
+      },
+      "workflows": [
+        {
+          "name": "interview-coach-preview-preparation",
+          "binding": "PROCESSING",
+          "class_name": "PreparationWorkflow",
+          "script_name": "interview-coach-jobs-preview"
+        },
+        {
+          "name": "interview-coach-preview-continuation",
+          "binding": "CONTINUATION",
+          "class_name": "ContinuationWorkflow",
+          "script_name": "interview-coach-jobs-preview"
+        }
+      ]
+    },
+    "production": {
+      "name": "interview-coach",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "interview-coach-production",
+          "migrations_dir": "drizzle",
+          "database_id": "6b9a1918-cd13-447b-8564-75d2b807bd04"
+        }
+      ],
+      "vars": {
+        "APP_ORIGIN": "https://interview-coach.hyetigran.workers.dev",
+        "RECORDING_ALLOWANCE": "3"
+      },
+      "r2_buckets": [
+        {
+          "binding": "MEDIA",
+          "bucket_name": "interview-coach-production-media"
+        }
+      ],
+      "triggers": {
+        "crons": [
+          "*/15 * * * *"
+        ]
+      },
+      "workflows": [
+        {
+          "name": "interview-coach-production-preparation",
+          "binding": "PROCESSING",
+          "class_name": "PreparationWorkflow",
+          "script_name": "interview-coach-jobs-production"
+        },
+        {
+          "name": "interview-coach-production-continuation",
+          "binding": "CONTINUATION",
+          "class_name": "ContinuationWorkflow",
+          "script_name": "interview-coach-jobs-production"
+        }
+      ]
+    }
+  },
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "interview-coach-local-media"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/15 * * * *"
+    ]
+  },
+  "workflows": [
+    {
+      "name": "interview-coach-local-preparation",
+      "binding": "PROCESSING",
+      "class_name": "PreparationWorkflow",
+      "script_name": "interview-coach-jobs-local"
+    },
+    {
+      "name": "interview-coach-local-continuation",
+      "binding": "CONTINUATION",
+      "class_name": "ContinuationWorkflow",
+      "script_name": "interview-coach-jobs-local"
+    }
+  ]
+}

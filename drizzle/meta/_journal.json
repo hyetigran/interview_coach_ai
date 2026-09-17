@@ -1,0 +1,62 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1789594220149,
+      "tag": "0000_reviews",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789624933977,
+      "tag": "0001_careless_miek",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789625475473,
+      "tag": "0002_tired_grandmaster",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1789626001948,
+      "tag": "0003_sticky_hawkeye",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789626493881,
+      "tag": "0004_talented_quicksilver",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1789652471420,
+      "tag": "0005_omniscient_luke_cage",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789653402076,
+      "tag": "0006_petite_the_phantom",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1789653690383,
+      "tag": "0007_mean_tattoo",
+      "breakpoints": true
+    }
+  ]
+}

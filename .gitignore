@@ -44,3 +44,10 @@ next-env.d.ts
 .evaluation-private/
 __pycache__/
 *.pyc
+
+# Cloudflare local state and build output
+.wrangler/
+.open-next/
+.dev.vars*
+playwright-report/
+test-results/

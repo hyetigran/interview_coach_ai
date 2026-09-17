@@ -1,0 +1,16 @@
+import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
+import { createTranscriptionModule } from './transcription';
+import { createRuntimeProcessing } from './processing';
+export class PreparationWorkflow extends WorkflowEntrypoint<CloudflareEnv, { jobId: string; attempt?:number; preparationAttempt?:number }> {
+  async run(event: WorkflowEvent<{ jobId: string; attempt?:number; preparationAttempt?:number }>, step: WorkflowStep) {
+    const processing = createRuntimeProcessing(this.env);
+    try {
+      await step.do('validate-and-checkpoint-audio', { retries: { limit: 2, delay: '2 seconds', backoff: 'exponential' }, timeout: '90 seconds' }, () => processing.prepare(event.payload.jobId,event.payload.preparationAttempt??0));
+    } catch (error) {
+      await step.do('record-preparation-failure', () => processing.fail(event.payload.jobId, error instanceof Error ? error.message : undefined,event.payload.preparationAttempt??0));
+    }
+    await step.do('transcribe-recording', { retries: { limit: 0, delay: '1 second' }, timeout: '18 minutes' }, () => createTranscriptionModule(this.env).run(event.payload.jobId,event.payload.attempt??0));
+    await step.do('publish-saved-transcription', {retries:{limit:2,delay:'2 seconds',backoff:'exponential'},timeout:'90 seconds'},()=>createTranscriptionModule(this.env).recoverReceipt('transcript-'+event.payload.jobId));
+    await step.do('dispatch-next-waiting-recording', () => processing.reconcile());
+  }
+}
