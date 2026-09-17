@@ -86,5 +86,5 @@ export const coachingRuns = sqliteTable('coaching_runs',{
  model:text().notNull(),promptVersion:text('prompt_version').notNull(),rubricVersion:text('rubric_version').notNull(),schemaVersion:text('schema_version').notNull(),verificationVersion:text('verification_version').notNull(),
 });
 export const coachingJobs = sqliteTable('coaching_jobs',{
- id:text().primaryKey(),runId:text('run_id').notNull(),threadId:text('thread_id').notNull(),state:text().notNull().default('queued'),sources:text(),draft:text(),result:text(),error:text(),startedAt:integer('started_at'),
+ id:text().primaryKey(),runId:text('run_id').notNull(),threadId:text('thread_id').notNull(),state:text().notNull().default('queued'),sources:text(),draft:text(),result:text(),error:text(),startedAt:integer('started_at'),draftDispatched:integer('draft_dispatched').notNull().default(0),verifyDispatched:integer('verify_dispatched').notNull().default(0),
 },table=>[uniqueIndex('coaching_thread').on(table.runId,table.threadId)]);

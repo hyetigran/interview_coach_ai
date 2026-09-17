@@ -1,3 +1,5 @@
+import { groupingWindows } from '../lib/threads';
+import { transcriptSchema } from '../lib/transcript';
 import { z } from 'zod';
 import { coachingSchema, coachingSources, resolveCoaching, withheldCoaching, unclearEvidence, COACHING_VERSIONS, type CoachingSources, type CoachingResult } from '../lib/coaching';
 import { createGroupingModule } from './grouping';
@@ -19,9 +21,22 @@ export function createCoachingModule(env:Environment,request:typeof fetch=fetch)
   const versions=COACHING_VERSIONS;
   await db.prepare("INSERT OR IGNORE INTO coaching_runs(id,review_id,owner_id,revision,deadline,model,prompt_version,rubric_version,schema_version,verification_version) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM reviews JOIN speaker_confirmations ON speaker_confirmations.review_id=reviews.id WHERE reviews.id=? AND reviews.lifecycle='active' AND reviews.input_revision=? AND speaker_confirmations.id=? AND speaker_confirmations.state='confirmed')").bind(id,grouping.review_id,grouping.owner_id,grouping.revision,Date.now()+3*3600000,versions.model,versions.prompt,versions.rubric,versions.schema,versions.verification,grouping.review_id,grouping.revision,id).run();
   if(!await live(id))return [];
-  for(const group of status.groups.filter(g=>!g.parentId)) {
+  const transcriptRow=await db.prepare('SELECT result_key FROM transcriptions WHERE id=(SELECT transcript_id FROM grouping_runs WHERE id=?)').bind(id).first<{result_key:string}>();
+  const object=transcriptRow?await env.MEDIA.get(transcriptRow.result_key):null;if(!object)throw new Error('Transcript coverage unavailable.');
+  const transcript=transcriptSchema.parse(await object.json());
+  const positions=new Map(transcript.utterances.map((u,i)=>[u.id,i]));const covered=new Set<number>();
+  const windows=groupingWindows(transcript);
+  const completed=(await db.prepare("SELECT ordinal FROM grouping_chunks WHERE run_id=? AND state='ready'").bind(id).all<{ordinal:number}>()).results;
+  for(const chunk of completed)for(const utterance of windows[chunk.ordinal]??[])covered.add(positions.get(utterance.id)!);
+  const roots=status.groups.filter(g=>!g.parentId);
+  for(const group of roots) {
+   const sources=coachingSources(group,status.groups);
+   const last=Math.max(...[...sources.questions,...sources.answers].map(e=>e.position));
+   const end=roots.find(g=>g.question[0].position>last)?.question[0].position??transcript.utterances.length;
+   for(let position=group.question[0].position;position<end;position++)if(!covered.has(position)){sources.incomplete=true;break;}
+
    const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(id+group.id))),b=>b.toString(16).padStart(2,'0')).join('');
-   await db.prepare(`INSERT OR IGNORE INTO coaching_jobs(id,run_id,thread_id,sources) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM coaching_runs WHERE id=? AND state='running' AND ${active})`).bind('coach-'+hash,id,group.id,JSON.stringify(coachingSources(group,status.groups)),id).run();
+   await db.prepare(`INSERT OR IGNORE INTO coaching_jobs(id,run_id,thread_id,sources) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM coaching_runs WHERE id=? AND state='running' AND ${active})`).bind('coach-'+hash,id,group.id,JSON.stringify(sources),id).run();
   }
   return (await db.prepare('SELECT id FROM coaching_jobs WHERE run_id=? ORDER BY rowid').bind(id).all<{id:string}>()).results.map(r=>r.id);
  }
@@ -29,12 +44,12 @@ export function createCoachingModule(env:Environment,request:typeof fetch=fetch)
   const job=await db.prepare('SELECT * FROM coaching_jobs WHERE id=?').bind(id).first<Job>();if(!job||job.state!=='queued')return;
   const run=await live(job.run_id);if(!run||run.state!=='running'||run.deadline<=Date.now())return;
   const claim=await db.prepare(`UPDATE coaching_jobs SET state='preparing',started_at=? WHERE id=? AND state='queued' AND EXISTS(SELECT 1 FROM coaching_runs WHERE id=? AND state='running' AND ${active})`).bind(Date.now(),id,run.id).run();if(!claim.meta.changes)return;
-  const reserved=new Set<string>(),submitted=new Set<string>();let unknown=false;
+  let unknown=false;
   async function publish(result:CoachingResult) {await db.prepare(`UPDATE coaching_jobs SET state='ready',result=?,draft=NULL,error=NULL WHERE id=? AND state IN ('preparing','generating','verifying') AND EXISTS(SELECT 1 FROM coaching_runs WHERE id=? AND state='running' AND ${active})`).bind(JSON.stringify(result),id,run!.id).run();}
   async function paid(stage:'draft'|'verify',instructions:string,input:string,schema:Record<string,unknown>) {
    const call=id+'-'+stage;
-   const permitted=await db.prepare(`UPDATE coaching_jobs SET state=? WHERE id=? AND state IN ('preparing','generating') AND EXISTS(SELECT 1 FROM coaching_runs WHERE id=? AND state='running' AND deadline>? AND ${active})`).bind(stage==='draft'?'generating':'verifying',id,run!.id,Date.now()).run();if(!permitted.meta.changes)throw new Error('Input changed.');
-   submitted.add(call);unknown=true;
+   const permitted=await db.prepare(`UPDATE coaching_jobs SET state=?,${stage==='draft'?'draft_dispatched':'verify_dispatched'}=1 WHERE id=? AND state IN ('preparing','generating') AND EXISTS(SELECT 1 FROM coaching_runs WHERE id=? AND state='running' AND deadline>? AND ${active})`).bind(stage==='draft'?'generating':'verifying',id,run!.id,Date.now()).run();if(!permitted.meta.changes)throw new Error('Input changed.');
+   unknown=true;
    const response=await requestStructured(request,env.OPENAI_API_KEY!,call,instructions,input,schema);
    if(!response.ok){if([400,401,403,413,429].includes(response.status)){await budget.settle(call,0);unknown=false;}throw new Error('Provider failed.');}
    const raw=await response.text();if(raw.length>2000000)throw new Error('Response exceeds limits.');
@@ -44,11 +59,11 @@ export function createCoachingModule(env:Environment,request:typeof fetch=fetch)
   }
   try {
    const sources=JSON.parse(job.sources!) as CoachingSources;
-   if(sources.uncertain||sources.questions.some(unclearEvidence)){await publish(withheldCoaching(sources));return;}
+   if(sources.incomplete||sources.uncertain||sources.questions.some(unclearEvidence)){await publish(withheldCoaching(sources));return;}
    const review=await db.prepare('SELECT role FROM reviews WHERE id=?').bind(run.review_id).first<{role:string}>();
    const input=JSON.stringify({role:review?.role,sources});if(new TextEncoder().encode(input).length>220000)throw new Error('Thread exceeds limits.');
    if(!env.OPENAI_API_KEY)throw new Error('API configuration missing.');
-   for(const stage of ['draft','verify']){const call=id+'-'+stage;if(!await budget.reserve(call,'openai-coaching-v1',STRUCTURED_RESERVATION))throw new Error('Processing allowance exhausted.');reserved.add(call);}
+   for(const stage of ['draft','verify']){const call=id+'-'+stage;if(!await budget.reserve(call,'openai-coaching-v1',STRUCTURED_RESERVATION))throw new Error('Processing allowance exhausted.');}
    const draft=resolveCoaching(await paid('draft',prompt,input,z.toJSONSchema(coachingSchema)),sources);
    await db.prepare(`UPDATE coaching_jobs SET draft=? WHERE id=? AND state='generating' AND EXISTS(SELECT 1 FROM coaching_runs WHERE id=? AND ${active})`).bind(JSON.stringify(draft),id,run.id).run();
    const verificationInput=JSON.stringify({sources,draft});if(new TextEncoder().encode(verificationInput).length>250000)throw new Error('Verification exceeds limits.');
@@ -57,9 +72,12 @@ export function createCoachingModule(env:Environment,request:typeof fetch=fetch)
    await publish(draft);
   } catch {
    await db.prepare("UPDATE coaching_jobs SET state=?,draft=NULL,error=? WHERE id=? AND state IN ('preparing','generating','verifying')").bind(unknown?'unknown':'failed',unknown?'The paid coaching outcome needs reconciliation. It will not be submitted again automatically.':'Coaching could not be published. Check source clarity, provider access and the processing allowance; other threads remain available.',id).run();
-  } finally {for(const call of reserved)if(!submitted.has(call))await budget.settle(call,0);}
+  } finally {await releaseUnsent();}
  }
- async function interrupt(id:string) {await db.prepare("UPDATE coaching_jobs SET state=CASE WHEN state='queued' THEN 'failed' ELSE 'unknown' END,draft=NULL,error='This thread was interrupted. Any paid outcome needs reconciliation.' WHERE id=? AND state IN ('queued','preparing','generating','verifying')").bind(id).run();}
+ async function releaseUnsent() {
+  for(const stage of ['draft','verify'])await db.prepare(`UPDATE processing_budget SET state='settled',settled_units=0 WHERE state='reserved' AND EXISTS(SELECT 1 FROM coaching_jobs WHERE processing_budget.id=coaching_jobs.id||'-${stage}' AND ${stage}_dispatched=0 AND coaching_jobs.state NOT IN ('queued','preparing','generating','verifying'))`).run();
+ }
+ async function interrupt(id:string) {await db.prepare("UPDATE coaching_jobs SET state=CASE WHEN state='queued' THEN 'failed' ELSE 'unknown' END,draft=NULL,error='This thread was interrupted. Any paid outcome needs reconciliation.' WHERE id=? AND state IN ('queued','preparing','generating','verifying')").bind(id).run();await releaseUnsent();}
  async function finish(id:string) {await db.prepare(`UPDATE coaching_runs SET state=CASE WHEN EXISTS(SELECT 1 FROM coaching_jobs WHERE run_id=? AND state<>'ready') THEN 'partial' ELSE 'ready' END WHERE id=? AND state='running' AND ${active} AND NOT EXISTS(SELECT 1 FROM coaching_jobs WHERE run_id=? AND state IN ('queued','preparing','generating','verifying'))`).bind(id,id,id).run();}
  async function status(owner:string,review:string) {
   const run=await db.prepare(`SELECT * FROM coaching_runs WHERE owner_id=? AND review_id=? AND ${active} ORDER BY revision DESC LIMIT 1`).bind(owner,review).first<Run>();
@@ -77,6 +95,7 @@ export function createCoachingModule(env:Environment,request:typeof fetch=fetch)
   await db.prepare("UPDATE coaching_jobs SET state='unknown',draft=NULL,error='Coaching was interrupted. Billing needs reconciliation.' WHERE state IN ('preparing','generating','verifying') AND started_at<?").bind(Date.now()-300000).run();
   await db.prepare("UPDATE coaching_jobs SET state='failed',error='This thread could not start before the deadline.' WHERE state='queued' AND run_id IN (SELECT id FROM coaching_runs WHERE deadline<=?)").bind(Date.now()).run();
   await db.prepare("UPDATE coaching_runs SET state='partial' WHERE state='running' AND deadline<=?").bind(Date.now()).run();
+  await releaseUnsent();
  }
  return {begin,run,interrupt,finish,status,cleanup};
 }

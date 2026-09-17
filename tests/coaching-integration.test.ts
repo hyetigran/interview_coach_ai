@@ -65,3 +65,16 @@ test.skipIf(process.env.OPENAI_COACHING_SMOKE!=='1')('real OpenAI draft and supp
  try {await module.run(job);await module.finish(action);const result=await module.status('coach-live','coach-live');expect(result?.state).toBe('ready');expect(result?.jobs[0].result).not.toBeNull();}
  finally {const rows=(await db.prepare('SELECT * FROM processing_budget WHERE id IN (?,?)').bind(job+'-draft',job+'-verify').all()).results;writeFileSync(`/tmp/interviewcoach-coaching-cost-${action}.json`,JSON.stringify(rows),{mode:0o600});}
 },240000);
+test('abrupt draft interruption retains only potentially dispatched cost and releases the never-submitted check',async()=>{
+ const action=await ready('coach-crash');const module=createCoachingModule({DB:db,MEDIA:bucket});const [job]=await module.begin(action);
+ await db.prepare("UPDATE coaching_jobs SET state='generating',draft_dispatched=1 WHERE id=?").bind(job).run();
+ for(const stage of ['draft','verify'])await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units) VALUES(?,'openai-coaching-v1',450000)").bind(job+'-'+stage).run();
+ await module.interrupt(job);expect(await db.prepare('SELECT state FROM processing_budget WHERE id=?').bind(job+'-draft').first()).toEqual({state:'reserved'});expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind(job+'-verify').first()).toEqual({state:'settled',settled_units:0});
+});
+test('a missing grouping section withholds judgments for its thread while a separately bounded thread continues',async()=>{
+ const {actionId,speakers}=await setup('coach-missing-followup',72);let groups=0;
+ const grouping=createGroupingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async()=>{const n=groups++;if(n===1)throw new Error('Lost follow-up section');return response({groups:[{...valid.groups[0],question:[{utteranceId:n===0?'u0':'u48',quote:valid.groups[0].question[0].quote}],answers:[{utteranceId:n===0?'u1':'u49',quote:valid.groups[0].answers[0].quote}]}]});});
+ await grouping.begin(actionId);await speakers.resume(actionId);for(let n=0;n<3;n++)await grouping.runChunk(actionId,n);await grouping.finish(actionId);
+ let calls=0;const module=createCoachingModule({DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'},async(_url,init)=>{calls++;return coachResponse(init);});const jobs=await module.begin(actionId);for(const job of jobs)await module.run(job);await module.finish(actionId);
+ const state=await module.status('coach-missing-followup','coach-missing-followup');expect(state?.jobs.map(j=>j.result?.outcome)).toEqual(['missing_facts','preserve']);expect(calls).toBe(2);expect(state?.jobs[0].result?.rationale).toContain('missing transcript section');
+});
