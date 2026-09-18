@@ -1,3 +1,4 @@
+import {reconcileProviderBilling} from '../server/historical-billing';
 import {afterAll,beforeAll,test,expect} from 'vitest';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {readFileSync,readdirSync} from 'node:fs';
@@ -88,4 +89,57 @@ test('configuration loss after a completed part settles known usage and allows a
  await module.run(id,1);await module.run(id,1);
  expect(calls).toBe(3);expect((await module.status(id,id))?.state).toBe('ready');
  expect(await db.prepare('SELECT reserved_units,settled_units FROM processing_budget WHERE id=?').bind(transcriptId+'-attempt-1').first()).toEqual({reserved_units:4000000,settled_units:6});
+});
+
+test('late part billing is reconciled before deletion and every attempt artifact is swept again',async()=>{
+ const {id,env,transcriptId,upload}=await fixture();
+ const mock=adapter(async()=>{throw new Error('Lost response');}),module=createTranscriptionModule(env,mock.request);
+ await module.run(id);
+ const receipt=`transcripts/${id}/${transcriptId}-part-0.provider.json`;
+ await bucket.put(receipt,JSON.stringify({response:await provider().text()}));
+ const extras=[0,1,2].flatMap(attempt=>[0,1,2].map(part=>`transcripts/${id}/${transcriptId}${attempt?'-attempt-'+attempt:''}-part-${part}.provider.json`)).filter(key=>key!==receipt);
+ for(const key of extras)await bucket.put(key,'late test artifact');
+ await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(id).run();
+ await module.cleanup();
+ expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({state:'settled',settled_units:3});
+ for(const key of [receipt,...extras,...[0,1,2].map(part=>`audio/${upload}/${transcriptId}/part-${part}.mp3`)])expect(await bucket.head(key)).toBeNull();
+ await bucket.put(receipt,JSON.stringify({response:await provider().text()}));await bucket.put(`audio/${upload}/${transcriptId}/part-0.mp3`,'late audio');
+ await module.cleanup();
+ expect(await bucket.head(receipt)).toBeNull();expect(await bucket.head(`audio/${upload}/${transcriptId}/part-0.mp3`)).toBeNull();
+ expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({settled_units:3});
+});
+test('deleting a part with missing usage removes content but retains its unknown charge',async()=>{
+ const {id,env,transcriptId}=await fixture();
+ const mock=adapter(async()=>Response.json({duration:1200,segments:[]})),module=createTranscriptionModule(env,mock.request);
+ await module.run(id);
+ await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(id).run();await module.cleanup();
+ expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({state:'reserved',settled_units:null});
+ expect(await bucket.head(`transcripts/${id}/${transcriptId}-part-0.provider.json`)).toBeNull();
+});
+test('receipt storage failure prevents destructive cleanup until billing can be read',async()=>{
+ const {id,env,transcriptId}=await fixture();
+ const mock=adapter(async()=>{throw new Error('Lost response');}),module=createTranscriptionModule(env,mock.request);
+ await module.run(id);
+ const receipt=`transcripts/${id}/${transcriptId}-part-0.provider.json`;
+ await bucket.put(receipt,JSON.stringify({response:await provider().text()}));
+ await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(id).run();
+ const failingBucket=new Proxy(bucket,{get(target,key){if(key==='get')return async(name:string)=>{if(name===receipt)throw new Error('Storage unavailable');return target.get(name);};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});
+ await expect(createTranscriptionModule({...env,MEDIA:failingBucket}).cleanup()).rejects.toThrow('Storage unavailable');
+ expect(await bucket.head(receipt)).not.toBeNull();
+ expect(await db.prepare('SELECT state FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({state:'reserved'});
+ await module.cleanup();
+ expect(await bucket.head(receipt)).toBeNull();
+ expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({settled_units:3});
+});
+
+test('historical reconciliation captures part usage but keeps the active partial reservation',async()=>{
+ const {id,env,transcriptId}=await fixture();
+ const mock=adapter(async()=>{throw new Error('Lost response');}),module=createTranscriptionModule(env,mock.request);
+ await module.run(id);
+ await bucket.put(`transcripts/${id}/${transcriptId}-part-0.provider.json`,JSON.stringify({response:JSON.stringify({segments:'invalid',usage:{type:'tokens',input_tokens:1,output_tokens:0}})}));
+ await reconcileProviderBilling(env);
+ expect(await db.prepare('SELECT state,charge_units FROM transcription_parts WHERE transcription_id=? AND part_index=0').bind(transcriptId).first()).toEqual({state:'unknown',charge_units:3});
+ expect(await db.prepare('SELECT state FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({state:'reserved'});
+ await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(id).run();await module.cleanup();
+ expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({settled_units:3});
 });

@@ -1,3 +1,4 @@
+import {reconcileTranscriptionPartBilling} from './transcription-part-lifecycle';
 import {transcriptionReceiptCharge} from './transcription-receipt';
 import {z} from 'zod';
 import {createBudgetLedger} from './budget';
@@ -20,6 +21,10 @@ export async function reconcileProviderBilling(env:Pick<CloudflareEnv,'DB'|'MEDI
   await db.prepare('UPDATE processing_budget SET reconciliation_checked_at=? WHERE id=?').bind(Date.now(),row.id).run();
   if(row.kind==='media')continue; // Cloudflare invoice reconciliation is operator-controlled.
   try {
+   if(row.kind==='transcripts'){
+    const parent=await db.prepare("SELECT id FROM transcriptions WHERE ? IN (id,id||'-attempt-1',id||'-attempt-2')").bind(row.id).first<{id:string}>();
+    if(parent)await reconcileTranscriptionPartBilling(env,parent.id);
+   }
    const object=await env.MEDIA.get(`${row.kind}/${row.review_id}/${row.id}.provider.json`);if(!object)continue;
    const saved=await object.json();
    if(row.kind==='transcripts'){

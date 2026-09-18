@@ -123,6 +123,10 @@ test('a completed provider receipt survives a failed billing settlement and is n
   expect(calls).toBe(1); expect((await module.status('transcript-overage','transcript-overage'))?.state).toBe('reconciliation');
   expect(await bucket.head('transcripts/transcript-overage/transcript-transcript-overage.provider.json')).not.toBeNull();
   expect(await db.prepare("SELECT state FROM processing_budget WHERE id='transcript-transcript-overage'").first()).toEqual({ state: 'reserved' });
+  await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id='transcript-overage'").run();
+  await module.cleanup();
+  expect(await bucket.head('transcripts/transcript-overage/transcript-transcript-overage.provider.json')).toBeNull();
+  expect(await db.prepare("SELECT state FROM processing_budget WHERE id='transcript-transcript-overage'").first()).toEqual({state:'reserved'});
 });
 
 test('database publication retries replay the saved provider receipt without another paid request',async()=>{

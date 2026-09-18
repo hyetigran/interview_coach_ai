@@ -182,3 +182,21 @@ test('hosted R2 completion can omit metadata while the stored WAV remains valid'
   expect((await hosted.status(owner,r.id)).admitted).toBe(1);
   expect(new Uint8Array(await (await hosted.play(owner,r.id,'bytes=0-43')).arrayBuffer())).toEqual(bytes.slice(0,44));
 });
+
+test('multipart billing read failure keeps deletion pending until the receipt can be reconciled',async()=>{
+ const owner='part-cleanup-owner',r=await review(owner),u=await upload(owner,r.id,wav(100));await media.complete(owner,r.id,u.id);
+ const bucket=await runtime.getR2Bucket('MEDIA') as unknown as R2Bucket;
+ const job=await db.prepare('SELECT id FROM processing_jobs WHERE upload_id=?').bind(u.id).first<{id:string}>();
+ const id='transcript-'+job!.id,receipt=`transcripts/${r.id}/${id}-part-0.provider.json`;
+ await db.prepare("INSERT INTO transcriptions(id,review_id,owner_id,job_id,revision,state) VALUES(?,?,?,?,1,'unknown')").bind(id,r.id,owner,job!.id).run();
+ await db.prepare("INSERT INTO transcription_parts(transcription_id,part_index,offset_ms,duration_ms,source_sha256,audio_key,state,provider_identity,receipt_key,submitted_at) VALUES(?,0,0,1000,? ,?,'unknown',?,?,1)").bind(id,'a'.repeat(64),`audio/${u.id}/${id}/part-0.mp3`,id+'-part-0',receipt).run();
+ await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units) VALUES(?,'openai-diarization-v1',6000000)").bind(id).run();
+ await bucket.put(receipt,JSON.stringify({response:JSON.stringify({usage:{type:'tokens',input_tokens:1,output_tokens:0}})}));
+ const failing=new Proxy(bucket,{get(target,key){if(key==='get')return async(name:string)=>{if(name===receipt)throw new Error('Receipt unavailable');return target.get(name);};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});
+ expect(await createMediaModule({DB:db,MEDIA:failing,AUTH_SECRET:'cleanup-test'}).remove(owner,r.id)).toEqual({cleanupPending:true});
+ expect(await bucket.head(receipt)).not.toBeNull();
+ await media.remove(owner,r.id);
+ expect(await media.deletionStatus(owner,r.id)).toEqual({cleanupPending:false});
+ expect(await bucket.head(receipt)).toBeNull();
+ expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(id).first()).toEqual({settled_units:3});
+});

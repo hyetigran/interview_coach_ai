@@ -96,3 +96,19 @@ race also retains its unresolved reservation. Both review axes cleared the
 focused coordinator fixes. Per-part receipt reconciliation, durable continuation
 after interruption, comprehensive historical billing/cleanup, and real full-hour
 provider verification remain required before this feature can be accepted.
+
+Multipart billing reconciliation now reads saved per-part usage without
+publishing transcript content. Active partial work retains its reservation;
+stopped attempts settle only known charges. Deletion reconciles billing before
+removing all bounded attempt/part receipt paths and registered part audio, and
+retains tombstones so later writes can be swept again. Storage read failures stop
+cleanup; malformed or absent usage leaves the charge reserved while deletion can
+remove the content. Media cleanup invokes the same path before marking an upload
+cleaned, so an unreadable billing receipt remains visible as pending deletion.
+Durable part-content recovery/resume and full-hour provider acceptance remain
+outstanding.
+
+An over-reservation receipt initially blocked cleanup by failing settlement.
+The regression now verifies that requested deletion removes its content while
+leaving the reservation unresolved. This does not reconcile the overage or make
+the local reservation a provider-enforced spending limit.

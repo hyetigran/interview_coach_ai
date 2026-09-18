@@ -1,3 +1,4 @@
+import {cleanupTranscriptionArtifacts} from './transcription-part-lifecycle';
 import {transcriptionRetryMaximum} from './transcription-part-budget';
 import {createMultipartTranscription} from './transcription-parts';
 import {transcriptionReceiptCharge,transcriptionReceiptTranscript} from './transcription-receipt';
@@ -124,7 +125,7 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
     await db.prepare(`UPDATE processing_budget SET state='settled',settled_units=0 WHERE state='reserved' AND EXISTS(SELECT 1 FROM transcriptions WHERE processing_budget.id=CASE WHEN paid_attempt=0 THEN transcriptions.id ELSE transcriptions.id||'-attempt-'||paid_attempt END AND NOT EXISTS(SELECT 1 FROM transcription_parts p WHERE p.transcription_id=transcriptions.id AND p.submitted_at IS NOT NULL) AND ((state IN ('queued','encoding') AND NOT ${active}) OR state IN ('failed','configuration')))` ).run();
     await db.prepare(`UPDATE transcriptions SET state='cancelled',error=NULL,result_key=NULL WHERE state<>'cancelled' AND ((state<>'ready' AND NOT ${active}) OR NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=transcriptions.review_id AND reviews.lifecycle='active'))`).run();
     const cancelled = (await db.prepare("SELECT review_id,id FROM transcriptions WHERE state='cancelled'").all<{ review_id: string; id: string }>()).results;
-    for(const row of cancelled)await env.MEDIA.delete([0,1,2].flatMap(attempt=>{const call=transcriptionAttemptId(row.id,attempt);return [`transcripts/${row.review_id}/${call}.json`,`transcripts/${row.review_id}/${call}.provider.json`];}));
+    for(const row of cancelled)await cleanupTranscriptionArtifacts(env,row.id);
     await db.prepare("UPDATE transcriptions SET state=CASE WHEN publication_attempts>=3 OR publication_deadline<=? THEN 'reconciliation_exhausted' ELSE 'reconciliation' END,error='Saved-result publication was interrupted; no provider request was repeated.' WHERE state='publishing' AND started_at<?").bind(Date.now(),Date.now()-5*60000).run();
     await db.prepare("UPDATE transcriptions SET state='reconciliation_exhausted',error='Saved-result recovery reached its limit. The receipt and unresolved billing reservation are retained.' WHERE state='reconciliation' AND (publication_attempts>=3 OR (publication_deadline>0 AND publication_deadline<=?))").bind(Date.now()).run();
     await db.prepare("UPDATE transcriptions SET state=CASE WHEN EXISTS(SELECT 1 FROM transcription_parts p WHERE p.transcription_id=transcriptions.id AND p.state IN ('submitting','unknown')) THEN 'unknown' ELSE 'failed' END,error='Transcription was interrupted. Completed parts are retained; unresolved outcomes require reconciliation.' WHERE state='encoding' AND started_at<?").bind(Date.now()-20*60000).run();
