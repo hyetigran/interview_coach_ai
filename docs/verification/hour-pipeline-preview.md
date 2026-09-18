@@ -74,3 +74,12 @@ automatic and manual question evidence. The transcript UI explains these markers
 speaker confirmation explains that labels must be selected separately in each
 part where the candidate speaks. These helpers are not yet connected to the
 provider coordinator. Full-length runtime acceptance remains outstanding.
+
+Saved aggregate receipts can now pass through publication and historical billing
+reconciliation. Their application-owned envelope binds the paid attempt and
+records that attempt's explicit charge, while preserving the assembled transcript
+and boundary markers. Provider JSON cannot opt into this internal format. A local
+D1/R2 regression recovered a saved aggregate without provider requests, preserved
+its evidence, and left the earlier attempt's charge unchanged. Twenty-seven
+focused receipt/transcription tests pass and both review axes are clear. The
+coordinator that creates these receipts from completed parts is still pending.

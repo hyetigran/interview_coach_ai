@@ -1,13 +1,13 @@
+import {transcriptionReceiptCharge,transcriptionReceiptTranscript} from './transcription-receipt';
 import {providerConfigured} from './provider-configuration';
 import {mediaServiceRequest} from './media-service';
 import {accountSlotAvailable} from './account-slot';
 import {reconcileProviderBilling} from './historical-billing';
 import {transcriptionAttemptId,TRANSCRIPTION_RESERVATION} from '../lib/transcription-attempt';
 import {recoveryPlan} from '../lib/recovery';
-import { z } from 'zod';
 import { createBudgetLedger } from './budget';
 import type { PreparationResult } from './processing';
-import { parseTranscript, type Transcript } from '../lib/transcript';
+import { type Transcript } from '../lib/transcript';
 type Environment = Pick<CloudflareEnv, 'DB' | 'MEDIA' | 'AUTH_SECRET' | 'OPENAI_API_KEY'|'OPENAI_JOBS_CONFIGURED' | 'LOCAL_MEDIA_ADAPTER' | 'MEDIA_PROCESSOR'>;
 type Row = { publication_retries:number; id: string; review_id: string; owner_id: string; job_id: string; revision: number; state: string; result_key: string | null; error: string | null; parent_id:string|null; publication_attempts:number; publication_deadline:number;paid_attempt:number };
 const active = "EXISTS(SELECT 1 FROM reviews WHERE reviews.id=transcriptions.review_id AND reviews.owner_id=transcriptions.owner_id AND reviews.lifecycle='active' AND reviews.input_revision=transcriptions.revision)";
@@ -68,7 +68,7 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
         await db.prepare('UPDATE transcriptions SET request_id=? WHERE id=? AND paid_attempt=?').bind(response.headers.get('x-request-id'), id,row.paid_attempt).run();
         if ((await live(id))?.paid_attempt!==row.paid_attempt) await env.MEDIA.delete(receiptKey);
       }
-      await publish(row,audio,JSON.parse(raw),'submitting');
+      await publish(row,audio,{response:raw},'submitting');
     } catch (error) {
       await db.prepare(`UPDATE transcriptions SET state=?,error=?,finished_at=? WHERE id=? AND paid_attempt=? AND state IN ('encoding','submitting') AND ${active}`).bind(receiptSaved ? 'reconciliation' : submitted ? 'unknown' : 'failed', receiptSaved ? 'OpenAI returned a result, which is safely stored. Its format or billing needs reconciliation before publication.' : submitted ? 'The paid transcription outcome needs reconciliation. It will not be submitted again automatically.' : error instanceof TranscriptionRejection ? error.message : 'Transcription could not start. Check local services, API access, and billing.', Date.now(), id,row.paid_attempt).run();
     }
@@ -77,9 +77,10 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
     }
   }
   async function publish(row:Row,audio:PreparationResult,data:unknown,state:'submitting'|'publishing',attempt=0) {
-    const usage=z.object({usage:z.object({type:z.literal('tokens'),input_tokens:z.number().int().nonnegative(),output_tokens:z.number().int().nonnegative()})}).safeParse(data);
-    if(usage.success)await budget.settle(transcriptionAttemptId(row.id,row.paid_attempt),Math.ceil(usage.data.usage.input_tokens*2.5+usage.data.usage.output_tokens*10));
-    const {transcript}=parseTranscript(data,row.id,audio.sha256,audio.durationMs);
+    const call=transcriptionAttemptId(row.id,row.paid_attempt);
+    const charge=transcriptionReceiptCharge(data,call);
+    if(charge!==null)await budget.settle(call,charge);
+    const transcript=transcriptionReceiptTranscript(data,call,row.id,audio.sha256,audio.durationMs);
     const current=await live(row.id);if(!current||current.state!==state||current.paid_attempt!==row.paid_attempt||(state==='publishing'&&current.publication_attempts!==attempt))return;
     const resultKey=`transcripts/${row.review_id}/${transcriptionAttemptId(row.id,row.paid_attempt)}.json`;
     await env.MEDIA.put(resultKey,JSON.stringify(transcript),{httpMetadata:{contentType:'application/json'}});
@@ -95,9 +96,9 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
     const claim=await db.prepare(`UPDATE transcriptions SET state='publishing',started_at=?,publication_attempts=publication_attempts+1,publication_deadline=CASE WHEN publication_deadline=0 THEN ? ELSE publication_deadline END WHERE id=? AND paid_attempt=? AND state IN ('reconciliation','unknown') AND publication_attempts<3 AND (publication_deadline=0 OR publication_deadline>?) AND ${active} AND ${accountSlotAvailable('transcriptions.owner_id','transcriptions.review_id')} RETURNING publication_attempts`).bind(now,now+15*60000,id,row.paid_attempt,now).first<{publication_attempts:number}>();
     if(!claim)return;
     try {
-      const saved=z.object({response:z.string().max(8000000)}).parse(await receipt.json());
+      const saved=await receipt.json();
       const preparation=await db.prepare("SELECT result FROM processing_jobs WHERE id=? AND state='ready'").bind(row.job_id).first<{result:string}>();if(!preparation)throw new Error('Prepared audio unavailable.');
-      await publish(row,JSON.parse(preparation.result),JSON.parse(saved.response),'publishing',claim.publication_attempts);
+      await publish(row,JSON.parse(preparation.result),saved,'publishing',claim.publication_attempts);
     } catch {
       await db.prepare(`UPDATE transcriptions SET state=CASE WHEN publication_attempts>=3 OR publication_deadline<=? THEN 'reconciliation_exhausted' ELSE 'reconciliation' END,error='The saved transcription could not be published. Its receipt is retained; unresolved charges stay reserved and no new provider request was sent.' WHERE id=? AND paid_attempt=? AND state='publishing' AND publication_attempts=? AND ${active}`).bind(Date.now(),id,row.paid_attempt,claim.publication_attempts).run();
     }

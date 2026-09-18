@@ -1,3 +1,4 @@
+import {transcriptionReceiptCharge} from './transcription-receipt';
 import {z} from 'zod';
 import {createBudgetLedger} from './budget';
 import {structuredCharge} from './openai-structured';
@@ -20,10 +21,14 @@ export async function reconcileProviderBilling(env:Pick<CloudflareEnv,'DB'|'MEDI
   if(row.kind==='media')continue; // Cloudflare invoice reconciliation is operator-controlled.
   try {
    const object=await env.MEDIA.get(`${row.kind}/${row.review_id}/${row.id}.provider.json`);if(!object)continue;
-   const receipt=z.object({response:z.string().max(8000000)}).parse(await object.json());
-   const data=JSON.parse(receipt.response);
-   const usage=row.kind==='transcripts'?z.object({usage:z.object({type:z.literal('tokens'),input_tokens:z.number().int().nonnegative(),output_tokens:z.number().int().nonnegative()})}).parse(data).usage:null;
-   await ledger.settle(row.id,usage?Math.ceil(usage.input_tokens*2.5+usage.output_tokens*10):structuredCharge(data));
+   const saved=await object.json();
+   if(row.kind==='transcripts'){
+    const charge=transcriptionReceiptCharge(saved,row.id);
+    if(charge!==null)await ledger.settle(row.id,charge);
+   }else{
+    const receipt=z.object({response:z.string().max(8000000)}).parse(saved);
+    await ledger.settle(row.id,structuredCharge(JSON.parse(receipt.response)));
+   }
   }catch{/* Missing or invalid billing evidence keeps its original reservation. */}
  }
 }

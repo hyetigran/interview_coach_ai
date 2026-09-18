@@ -1,3 +1,5 @@
+import {assembleTranscriptionParts} from '../lib/transcription-assembly';
+import {reconcileProviderBilling} from '../server/historical-billing';
 import {createProcessingModule} from '../server/processing';
 import {createTranscriptionRetry} from '../server/transcription-retry';
 import { afterAll, beforeAll, expect, test } from 'vitest';
@@ -23,6 +25,23 @@ async function setup(id: string) {
 function adapter(paid: () => Promise<Response>): typeof fetch {
   return async input => String(input).includes('/compression/') ? new Response(new Uint8Array([1,2,3]), { headers: { 'content-length': '3' } }) : paid();
 }
+
+test('multipart receipt recovery preserves evidence and settles only the current attempt',async()=>{
+ const id='multipart-receipt',env=await setup(id),transcriptId='transcript-'+id,call=transcriptId+'-attempt-1';
+ const transcript=assembleTranscriptionParts(transcriptId,'a'.repeat(64),2000,[0,1].map(index=>({index,offsetMs:index*1000,durationMs:1000,response:{duration:1,segments:[{start:0,end:1,speaker:'A',text:'Speech.'}]}})));
+ await db.prepare("UPDATE transcriptions SET state='unknown',paid_attempt=1 WHERE id=?").bind(transcriptId).run();
+ await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units,state,settled_units) VALUES(?,'openai-diarization-v1',6000000,'settled',3)").bind(transcriptId).run();
+ await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units) VALUES(?,'openai-diarization-v1',2000000)").bind(call).run();
+ await bucket.put(`transcripts/${id}/${call}.provider.json`,JSON.stringify({kind:'transcription-parts-v1',callId:call,chargeUnits:3,transcript}));
+ let calls=0;const module=createTranscriptionModule(env,adapter(async()=>{calls++;throw new Error('Must not resubmit');}));
+ await reconcileProviderBilling(env);
+ await module.recoverReceipt(transcriptId);await module.recoverReceipt(transcriptId);await module.run(id,1);
+ expect(calls).toBe(0);
+ expect((await module.status(id,id))?.transcript).toEqual(transcript);
+ expect((await module.status(id,id))?.state).toBe('ready');
+ expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(call).first()).toEqual({settled_units:3});
+ expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({settled_units:3});
+});
 
 test.each([
   [400,'The transcription provider rejected the prepared recording (HTTP 400). The original is retained; its format and duration need checking before retrying.'],
