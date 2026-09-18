@@ -29,7 +29,9 @@ export class MediaProcessor extends Container<{DB: D1Database}> {
     if (admitted !== 200) return new Response(admitted === 402 ? 'Media processing is no longer eligible, has unresolved billing, or exceeds the allowance.' : 'This media attempt was already submitted. Retry after cancellation completes.', {status:admitted});
     try {
       // Avoid containerFetch's automatic restart after an uncertain/terminated execution.
-      const init: RequestInit & {duplex:'half'} = {method:'POST',headers:{authorization:`Bearer ${secret}`},body:request.body,signal:request.signal,duplex:'half'};
+      const headers:Record<string,string>={authorization:`Bearer ${secret}`};
+      if(path.startsWith('/compression/')&&request.headers.get('x-transcription-parts')==='1')headers['x-transcription-parts']='1';
+      const init: RequestInit & {duplex:'half'} = {method:'POST',headers,body:request.body,signal:request.signal,duplex:'half'};
       const response = await this.ctx.container!.getTcpPort(8790).fetch(new Request(`http://localhost:8790${path}`, init));
       if (!response.body) { await this.destroy(); return response; }
       const reader = response.body.getReader();

@@ -47,3 +47,21 @@ and its $6 reservation remains held. Client-side chunking is required before thi
 model can satisfy the 60-minute requirement. The browser test was interrupted after the persisted terminal failure;
 it did not complete the journey. Final committed assertions and video remain
 unverified. Do not treat the test's existence as completed full-length acceptance.
+
+The part-compression groundwork is verified locally: the private media route can
+emit three independently decodable MP3 parts of at most 1200 seconds. A real
+Linux container limited to 0.25 CPU and 1 GiB compressed the synthetic hour to
+14,402,053 bytes; decoding all parts produced exactly the original hour's sample
+count. Authentication, browser-origin denial, non-root execution, and corrupt
+input rejection passed in the same run. This verifies preparation, not provider
+transcription or speaker attribution across parts.
+
+The durable part store records immutable source/timeline identities, serializes
+paid submissions, blocks progress after an unknown outcome, preserves completed
+parts on retry, and retains known charges after cancellation. A forced concurrent
+initialization regression reproduced conflicting persisted manifests; an atomic
+manifest claim fixed it. Nineteen focused store/protocol tests, lint, and type
+checks pass, with both review axes clear for this groundwork. The coordinator,
+receipt recovery, incremental billing, speaker confirmation, and preview
+end-to-end verification remain incomplete. No runtime deployment or remote
+migration includes this groundwork yet.

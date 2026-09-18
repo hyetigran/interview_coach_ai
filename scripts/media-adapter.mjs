@@ -93,13 +93,15 @@ export function mediaServer(secret, temporaryRoot = tmpdir(), initialized = Prom
       const source = join(directory, 'source');
       await pipeline(request, bounded, createWriteStream(source, { mode: 0o600 }), { signal: controller.signal });
       let result;
-      if (request.url.startsWith('/compression/')) {
+      const parts=request.url.startsWith('/compression/')&&request.headers['x-transcription-parts']==='1';
+      if(parts)result=await compressChunks(source,directory,controller.signal);
+      else if (request.url.startsWith('/compression/')) {
         const target = join(directory, 'speech.mp3');
         await run('ffmpeg', ['-v', 'error', '-protocol_whitelist', 'file', '-format_whitelist', 'wav', '-i', source, '-map', '0:a:0', '-ac', '1', '-ar', '16000', '-b:a', '32k', '-t', '3600', '-y', target], controller.signal);
         result = { target, bytes: (await stat(target)).size };
         if (result.bytes > 15000000) throw new InvalidRecording('Compressed recording exceeds transcription limits.');
       } else result = await extractAudio(source, directory, controller.signal);
-      response.writeHead(200, { 'Content-Type': request.url.startsWith('/compression/') ? 'audio/mpeg' : 'audio/wav', 'Content-Length': String(result.bytes), 'Cache-Control': 'no-store' });
+      response.writeHead(200, { 'Content-Type': parts ? 'application/vnd.interview-coach.transcription-parts' : request.url.startsWith('/compression/') ? 'audio/mpeg' : 'audio/wav', 'Content-Length': String(result.bytes), 'Cache-Control': 'no-store' });
       await pipeline(createReadStream(result.target), response, { signal: controller.signal });
     } catch (error) {
       if (!response.headersSent && !response.destroyed) response.writeHead(error instanceof InvalidRecording && !controller.signal.aborted ? 422 : 503).end(controller.signal.aborted ? 'Media preparation timed out or was cancelled.' : error instanceof InvalidRecording ? error.message : 'The local media service could not finish. Check that ffmpeg and ffprobe are installed and retry.');

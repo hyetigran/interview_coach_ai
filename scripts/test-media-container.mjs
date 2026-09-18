@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 
 const image = process.argv[2];
-const longCompression = process.argv.includes('--long-compression');
+const chunkCompression = process.argv.includes('--chunk-compression');
+const longCompression = chunkCompression || process.argv.includes('--long-compression');
 if (!image) throw new Error('Usage: node scripts/test-media-container.mjs IMAGE');
 const directory = await mkdtemp(join(tmpdir(), 'coach-container-test-'));
 const secret = randomBytes(32).toString('hex');
@@ -55,10 +56,25 @@ try {
   }
   const source = join(directory, 'speech.wav');
   execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${longCompression ? 3600 : 1}`, '-ar', '16000', '-ac', '1', source]);
-  const compressed = await fetch(origin + '/compression/transcript-prepare-00000000-0000-0000-0000-000000000000-attempt-1', { method: 'POST', headers, body: await readFile(source), signal: AbortSignal.timeout(85000) });
+  const compressed = await fetch(origin + '/compression/transcript-prepare-00000000-0000-0000-0000-000000000000-attempt-1', { method: 'POST', headers: {...headers,...(chunkCompression?{'x-transcription-parts':'1'}:{})}, body: await readFile(source), signal: AbortSignal.timeout(85000) });
   assert.equal(compressed.status, 200);
-  assert.equal(compressed.headers.get('content-type'), 'audio/mpeg');
-  const compressedSize = (await compressed.arrayBuffer()).byteLength;
+  assert.equal(compressed.headers.get('content-type'), chunkCompression?'application/vnd.interview-coach.transcription-parts':'audio/mpeg');
+  const compressedBody=Buffer.from(await compressed.arrayBuffer());
+  const compressedSize = compressedBody.byteLength;
+  if(chunkCompression){
+    const headerLength=compressedBody.readUInt32BE(0),manifest=JSON.parse(compressedBody.subarray(4,4+headerLength).toString());
+    assert.equal(manifest.version,1);
+    assert.deepEqual(manifest.chunks.map(({offsetMs,durationMs})=>({offsetMs,durationMs})),[0,1200000,2400000].map(offsetMs=>({offsetMs,durationMs:1200000})));
+    let cursor=4+headerLength,decodedBytes=0;
+    for(const part of manifest.chunks){
+      const file=join(directory,`part-${part.index}.mp3`),raw=join(directory,`part-${part.index}.pcm`);
+      await writeFile(file,compressedBody.subarray(cursor,cursor+part.bytes));cursor+=part.bytes;
+      execFileSync('ffmpeg',['-v','error','-i',file,'-ac','1','-ar','16000','-f','s16le',raw],{timeout:30000});
+      decodedBytes+=(await stat(raw)).size;
+    }
+    assert.equal(cursor,compressedSize);assert.equal(decodedBytes,3600*32000);
+    console.log('Verified three independently decoded parts with complete hour-long sample coverage.');
+  }
   assert.ok(compressedSize > 0 && compressedSize < 15000000);
   console.log(`Verified ${longCompression ? 3600 : 1}s compression: ${compressedSize} bytes`);
   const invalid = await fetch(origin + operation, { method: 'POST', headers, body: 'corrupt recording' });

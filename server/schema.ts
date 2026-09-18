@@ -1,4 +1,4 @@
-import { uniqueIndex, index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { primaryKey, uniqueIndex, index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 export const user = sqliteTable('users', {
   id: text().primaryKey(), name: text().notNull(), email: text().notNull().unique(),
@@ -102,3 +102,12 @@ export const savedAnswers=sqliteTable('saved_answers',{id:text().primaryKey(),re
 export const transcriptCorrectionIntents=sqliteTable('transcript_correction_intents',{candidateSpeakers:text('candidate_speakers'),manualGroups:text('manual_groups'),manualReview:integer('manual_review').notNull().default(0),coverage:text(),id:text().primaryKey(),reviewId:text('review_id').notNull(),ownerId:text('owner_id').notNull(),parentId:text('parent_id').notNull(),revision:integer().notNull(),resultKey:text('result_key').notNull(),state:text().notNull().default('preparing'),createdAt:integer('created_at').notNull(),reuseGroupingId:text('reuse_grouping_id'),reusePrefix:integer('reuse_prefix').notNull().default(0)});
 
 export const recoveryRequests=sqliteTable('recovery_requests',{plan:text(),targetAttempt:integer('target_attempt').notNull().default(0),dispatchState:text('dispatch_state').notNull().default('pending'),dispatchAttempts:integer('dispatch_attempts').notNull().default(0),dispatchStartedAt:integer('dispatch_started_at'),id:text().primaryKey(),reviewId:text('review_id').notNull(),ownerId:text('owner_id').notNull(),stage:text().notNull(),targetId:text('target_id').notNull(),inputRevision:integer('input_revision').notNull(),contextRevision:integer('context_revision').notNull(),state:text().notNull().default('pending'),createdAt:integer('created_at').notNull()});
+
+export const transcriptionParts = sqliteTable('transcription_parts', {
+  transcriptionId:text('transcription_id').notNull(),partIndex:integer('part_index').notNull(),
+  offsetMs:integer('offset_ms').notNull(),durationMs:integer('duration_ms').notNull(),sourceSha256:text('source_sha256').notNull(),
+  audioKey:text('audio_key').notNull(),state:text().notNull().default('queued'),paidAttempt:integer('paid_attempt').notNull().default(0),
+  providerIdentity:text('provider_identity'),receiptKey:text('receipt_key'),requestId:text('request_id'),submittedAt:integer('submitted_at'),chargeUnits:integer('charge_units'),
+},table=>[primaryKey({columns:[table.transcriptionId,table.partIndex]})]);
+
+export const transcriptionPartManifests=sqliteTable('transcription_part_manifests',{transcriptionId:text('transcription_id').primaryKey(),identity:text().notNull()});
