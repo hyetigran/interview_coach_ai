@@ -83,3 +83,16 @@ D1/R2 regression recovered a saved aggregate without provider requests, preserve
 its evidence, and left the earlier attempt's charge unchanged. Twenty-seven
 focused receipt/transcription tests pass and both review axes are clear. The
 coordinator that creates these receipts from completed parts is still pending.
+
+The multipart coordinator is connected for recordings longer than 1400 seconds.
+It compresses once, saves audio under the upload's cleanup prefix, and submits at
+most one part per invocation using a durable paid identity. Three bounded
+Workflow steps can complete an hour; completed parts survive explicit retries,
+whose reservation covers only unfinished parts. Local D1/R2 tests with mocked
+provider responses verify complete-hour assembly, one compression, unique paid
+calls, unknown-outcome blocking, cancellation accounting, incremental retry,
+configuration loss, and dispatch expiry after progress. A legacy cancellation
+race also retains its unresolved reservation. Both review axes cleared the
+focused coordinator fixes. Per-part receipt reconciliation, durable continuation
+after interruption, comprehensive historical billing/cleanup, and real full-hour
+provider verification remain required before this feature can be accepted.

@@ -10,6 +10,7 @@ export class PreparationWorkflow extends WorkflowEntrypoint<CloudflareEnv, { job
       await step.do('record-preparation-failure', () => processing.fail(event.payload.jobId, error instanceof Error ? error.message : undefined,event.payload.preparationAttempt??0));
     }
     await step.do('transcribe-recording', { retries: { limit: 0, delay: '1 second' }, timeout: '18 minutes' }, () => createTranscriptionModule(this.env).run(event.payload.jobId,event.payload.attempt??0));
+    for(const part of [2,3])await step.do(`transcribe-recording-part-${part}`, {retries:{limit:0,delay:'1 second'},timeout:'18 minutes'},()=>createTranscriptionModule(this.env).run(event.payload.jobId,event.payload.attempt??0));
     await step.do('publish-saved-transcription', {retries:{limit:2,delay:'2 seconds',backoff:'exponential'},timeout:'90 seconds'},()=>createTranscriptionModule(this.env).recoverReceipt('transcript-'+event.payload.jobId));
     await step.do('dispatch-next-waiting-recording', () => processing.reconcile());
   }

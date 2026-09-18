@@ -43,6 +43,27 @@ test('multipart receipt recovery preserves evidence and settles only the current
  expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({settled_units:3});
 });
 
+test('a keyless runner racing legacy submission and deletion cannot release unknown billing',async()=>{
+ const id='configuration-legacy-race',env=await setup(id),transcriptId='transcript-'+id;
+ await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units) VALUES(?,'openai-diarization-v1',6000000)").bind(transcriptId).run();
+ const racingDB=new Proxy(db,{get(target,key){
+  if(key!=='prepare'){const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}
+  return (sql:string)=>{
+   const statement=target.prepare(sql);
+   if(!sql.startsWith("UPDATE transcriptions SET state='configuration'"))return statement;
+   return {bind:(...values:unknown[])=>{const bound=statement.bind(...values);return {run:async()=>{
+    await db.prepare("UPDATE transcriptions SET state='cancelled' WHERE id=?").bind(transcriptId).run();
+    await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(id).run();
+    return bound.run();
+   }};}};
+  };
+ }});
+ await createTranscriptionModule({...env,DB:racingDB,OPENAI_API_KEY:undefined}).run(id);
+ expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({state:'reserved',settled_units:null});
+ // This reservation is synthetic race setup; no request was actually submitted.
+ await db.prepare('DELETE FROM processing_budget WHERE id=?').bind(transcriptId).run();
+});
+
 test.each([
   [400,'The transcription provider rejected the prepared recording (HTTP 400). The original is retained; its format and duration need checking before retrying.'],
   [429,'OpenAI quota or rate limit reached. Check the API project billing before retrying.'],

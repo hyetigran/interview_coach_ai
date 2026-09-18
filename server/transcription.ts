@@ -1,3 +1,5 @@
+import {transcriptionRetryMaximum} from './transcription-part-budget';
+import {createMultipartTranscription} from './transcription-parts';
 import {transcriptionReceiptCharge,transcriptionReceiptTranscript} from './transcription-receipt';
 import {providerConfigured} from './provider-configuration';
 import {mediaServiceRequest} from './media-service';
@@ -25,7 +27,7 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
     const billing=await db.prepare('SELECT state FROM processing_budget WHERE id=?').bind(transcriptionAttemptId(row.id,row.paid_attempt)).first<{state:'reserved'|'settled'}>();
     const used=await db.prepare("SELECT COALESCE(SUM(CASE WHEN state='reserved' THEN reserved_units ELSE COALESCE(settled_units,0) END),0) AS units FROM processing_budget").first<{units:number}>();
     const saved=['unknown','reconciliation','reconciliation_exhausted'].includes(row.state)?await env.MEDIA.head(`transcripts/${row.review_id}/${transcriptionAttemptId(row.id,row.paid_attempt)}.provider.json`):null;
-    const step=recoveryPlan([{stage:'transcription',id:row.id,state:row.state,attempts:row.paid_attempt+1,receipt:saved?'complete':'none',billing:billing?.state??'none',maximumUnits:TRANSCRIPTION_RESERVATION,current:true}],50000000-(used?.units??0)).steps[0];
+    const step=recoveryPlan([{stage:'transcription',id:row.id,state:row.state,attempts:row.paid_attempt+1,receipt:saved?'complete':'none',billing:billing?.state??'none',maximumUnits:await transcriptionRetryMaximum(db,row.id),current:true}],50000000-(used?.units??0)).steps[0];
     const paidRetry={canRetry:step.action==='retry'&&providerConfigured(env),reason:!providerConfigured(env)?'Configure transcription access before retrying.':step.reason,maximumUnits:step.maximumUnits,attempt:row.paid_attempt};
     const retry=saved?{canRetry:row.state==='reconciliation_exhausted'&&row.publication_retries<2,reason:row.publication_retries>=2?'Saved transcription publication reached its three-window limit. The receipt is retained.':'Publish the saved transcription without another provider request.',maximumUnits:0,attempt:row.paid_attempt,publicationCycle:row.publication_retries}:paidRetry;
     return { id: row.id,retry, parentId:row.parent_id, revision:row.revision, state: row.state, error: row.error, transcript: object ? await object.json<Transcript>() : null };
@@ -33,15 +35,27 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
   async function run(jobId: string, expectedAttempt?:number) {
     const id = 'transcript-' + jobId; const row = await live(id);
     if (!row || row.state !== 'queued' || (expectedAttempt!==undefined && row.paid_attempt!==expectedAttempt)) return;
-    if (!env.OPENAI_API_KEY) { await db.prepare("UPDATE transcriptions SET state='configuration',error='Transcription is not configured. Add OPENAI_API_KEY to .env and restart the local app.' WHERE id=? AND paid_attempt=? AND state='queued'").bind(id,row.paid_attempt).run(); await db.prepare("UPDATE processing_budget SET state='settled',settled_units=0 WHERE id=? AND state='reserved' AND EXISTS(SELECT 1 FROM transcriptions WHERE id=? AND paid_attempt=? AND state='configuration')").bind(transcriptionAttemptId(id,row.paid_attempt),id,row.paid_attempt).run(); return; }
+    if (!env.OPENAI_API_KEY) {
+      const stopped=await db.prepare(`UPDATE transcriptions SET state='configuration',error='Transcription is not configured. Add OPENAI_API_KEY to .env and restart the local app.' WHERE id=? AND paid_attempt=? AND state='queued' AND ${active}`).bind(id,row.paid_attempt).run();
+      if(!stopped.meta.changes)return;
+      await db.prepare("UPDATE processing_budget SET state='settled',settled_units=0 WHERE id=? AND state='reserved' AND NOT EXISTS(SELECT 1 FROM transcription_parts WHERE transcription_id=? AND submitted_at IS NOT NULL) AND EXISTS(SELECT 1 FROM transcriptions WHERE id=? AND paid_attempt=? AND state='configuration')").bind(transcriptionAttemptId(id,row.paid_attempt),id,id,row.paid_attempt).run();
+      if(await db.prepare('SELECT 1 FROM transcription_parts WHERE transcription_id=? LIMIT 1').bind(id).first())await createMultipartTranscription(env,request).settleStopped(row);
+      return;
+    }
     const claim = await db.prepare(`UPDATE transcriptions SET state='encoding',started_at=? WHERE id=? AND paid_attempt=? AND state='queued' AND ${active}`).bind(Date.now(), id,row.paid_attempt).run();
     if (!claim.meta.changes) return;
     const call=transcriptionAttemptId(id,row.paid_attempt);
-    let submitted = false; let receiptSaved = false;
+    let submitted = false; let receiptSaved = false; let multipart=false;
     try {
       const preparation = await db.prepare("SELECT result FROM processing_jobs WHERE id=? AND state='ready'").bind(jobId).first<{ result: string }>();
       if (!preparation) throw new Error('Prepared audio is unavailable.');
       const audio = JSON.parse(preparation.result) as PreparationResult;
+      if(audio.durationMs>1400000){
+        multipart=true;
+        const receipt=await createMultipartTranscription(env,request).run(row,audio);
+        if(receipt)await publish(row,audio,receipt,'encoding');
+        return;
+      }
       const object = await env.MEDIA.get(audio.audioKey ?? audio.sourceKey);
       if (!object) throw new Error('Prepared audio is unavailable.');
       const encoded = await mediaServiceRequest(env, `/compression/${call}`, { method: 'POST', body: object.body, signal: AbortSignal.timeout(80000) }, request);
@@ -70,13 +84,16 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
       }
       await publish(row,audio,{response:raw},'submitting');
     } catch (error) {
+      if(multipart){
+        await db.prepare(`UPDATE transcriptions SET state='reconciliation',error='Saved transcription parts need reconciliation; no paid request will be repeated.' WHERE id=? AND paid_attempt=? AND state='encoding' AND ${active}`).bind(id,row.paid_attempt).run();return;
+      }
       await db.prepare(`UPDATE transcriptions SET state=?,error=?,finished_at=? WHERE id=? AND paid_attempt=? AND state IN ('encoding','submitting') AND ${active}`).bind(receiptSaved ? 'reconciliation' : submitted ? 'unknown' : 'failed', receiptSaved ? 'OpenAI returned a result, which is safely stored. Its format or billing needs reconciliation before publication.' : submitted ? 'The paid transcription outcome needs reconciliation. It will not be submitted again automatically.' : error instanceof TranscriptionRejection ? error.message : 'Transcription could not start. Check local services, API access, and billing.', Date.now(), id,row.paid_attempt).run();
     }
     finally {
-      if(!submitted&&!receiptSaved)await db.prepare("UPDATE processing_budget SET state='settled',settled_units=0 WHERE id=? AND state='reserved' AND EXISTS(SELECT 1 FROM transcriptions WHERE id=? AND paid_attempt=? AND state IN ('failed','configuration','cancelled'))").bind(call,id,row.paid_attempt).run();
+      if(!multipart&&!submitted&&!receiptSaved)await db.prepare("UPDATE processing_budget SET state='settled',settled_units=0 WHERE id=? AND state='reserved' AND EXISTS(SELECT 1 FROM transcriptions WHERE id=? AND paid_attempt=? AND state IN ('failed','configuration','cancelled'))").bind(call,id,row.paid_attempt).run();
     }
   }
-  async function publish(row:Row,audio:PreparationResult,data:unknown,state:'submitting'|'publishing',attempt=0) {
+  async function publish(row:Row,audio:PreparationResult,data:unknown,state:'encoding'|'submitting'|'publishing',attempt=0) {
     const call=transcriptionAttemptId(row.id,row.paid_attempt);
     const charge=transcriptionReceiptCharge(data,call);
     if(charge!==null)await budget.settle(call,charge);
@@ -104,13 +121,13 @@ export function createTranscriptionModule(env: Environment, request: typeof fetc
     }
   }
   async function cleanup() {
-    await db.prepare(`UPDATE processing_budget SET state='settled',settled_units=0 WHERE state='reserved' AND EXISTS(SELECT 1 FROM transcriptions WHERE processing_budget.id=CASE WHEN paid_attempt=0 THEN transcriptions.id ELSE transcriptions.id||'-attempt-'||paid_attempt END AND ((state IN ('queued','encoding') AND NOT ${active}) OR state IN ('failed','configuration')))` ).run();
+    await db.prepare(`UPDATE processing_budget SET state='settled',settled_units=0 WHERE state='reserved' AND EXISTS(SELECT 1 FROM transcriptions WHERE processing_budget.id=CASE WHEN paid_attempt=0 THEN transcriptions.id ELSE transcriptions.id||'-attempt-'||paid_attempt END AND NOT EXISTS(SELECT 1 FROM transcription_parts p WHERE p.transcription_id=transcriptions.id AND p.submitted_at IS NOT NULL) AND ((state IN ('queued','encoding') AND NOT ${active}) OR state IN ('failed','configuration')))` ).run();
     await db.prepare(`UPDATE transcriptions SET state='cancelled',error=NULL,result_key=NULL WHERE state<>'cancelled' AND ((state<>'ready' AND NOT ${active}) OR NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=transcriptions.review_id AND reviews.lifecycle='active'))`).run();
     const cancelled = (await db.prepare("SELECT review_id,id FROM transcriptions WHERE state='cancelled'").all<{ review_id: string; id: string }>()).results;
     for(const row of cancelled)await env.MEDIA.delete([0,1,2].flatMap(attempt=>{const call=transcriptionAttemptId(row.id,attempt);return [`transcripts/${row.review_id}/${call}.json`,`transcripts/${row.review_id}/${call}.provider.json`];}));
     await db.prepare("UPDATE transcriptions SET state=CASE WHEN publication_attempts>=3 OR publication_deadline<=? THEN 'reconciliation_exhausted' ELSE 'reconciliation' END,error='Saved-result publication was interrupted; no provider request was repeated.' WHERE state='publishing' AND started_at<?").bind(Date.now(),Date.now()-5*60000).run();
     await db.prepare("UPDATE transcriptions SET state='reconciliation_exhausted',error='Saved-result recovery reached its limit. The receipt and unresolved billing reservation are retained.' WHERE state='reconciliation' AND (publication_attempts>=3 OR (publication_deadline>0 AND publication_deadline<=?))").bind(Date.now()).run();
-    await db.prepare("UPDATE transcriptions SET state='failed',error='Audio encoding was interrupted before provider submission. Retry can reuse the prepared recording.' WHERE state='encoding' AND started_at<?").bind(Date.now()-20*60000).run();
+    await db.prepare("UPDATE transcriptions SET state=CASE WHEN EXISTS(SELECT 1 FROM transcription_parts p WHERE p.transcription_id=transcriptions.id AND p.state IN ('submitting','unknown')) THEN 'unknown' ELSE 'failed' END,error='Transcription was interrupted. Completed parts are retained; unresolved outcomes require reconciliation.' WHERE state='encoding' AND started_at<?").bind(Date.now()-20*60000).run();
     // A process crash after submitting cannot trigger another paid request.
     await db.prepare("UPDATE transcriptions SET state='unknown',error='The transcription was interrupted. Billing and outcome need reconciliation.' WHERE state='submitting' AND started_at<?").bind(Date.now() - 20 * 60000).run();
   }
