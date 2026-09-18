@@ -23,15 +23,15 @@ pnpm exec playwright test e2e/hour-pipeline.spec.ts --grep 'video reaches'
 Preflight uses ffprobe to enforce duration and stream kind before creating a
 review or starting paid work. WAV must additionally satisfy the app's standard
 44-byte PCM header requirement. Video must produce a distinct playable derivative.
-The browser uploads the whole file, leaves and returns, confirms a detected
-candidate label, and observes grouping and coaching. Assertions require a
+The browser uploads the whole file, leaves and returns, confirms detected
+candidate labels in all three parts, and observes grouping and coaching. Assertions require a
 nonempty proposed answer with resolved interview citations. Saved answer and
 priorities use real authenticated APIs, followed by browser reload checks and
 deletion cleanup.
 
 This is partial ticket #15 evidence. API saves do not establish keyboard editing
 and saving; the test does not yet cover question navigation, correction, all
-candidate labels, or all loading/error states. A segment after 3500 seconds proves
+candidate labels outside the fixture phrase, or all loading/error states. A segment after 3500 seconds proves
 late-recording reach, not continuous coverage or correct attribution. Real
 permissioned recordings and independent evaluation remain outstanding.
 
@@ -65,3 +65,12 @@ checks pass, with both review axes clear for this groundwork. The coordinator,
 receipt recovery, incremental billing, speaker confirmation, and preview
 end-to-end verification remain incomplete. No runtime deployment or remote
 migration includes this groundwork yet.
+
+
+Transcript assembly now validates complete contiguous part coverage, retains
+original timestamps, and namespaces each provider request's speaker labels.
+Passages within two seconds of processing cuts carry explicit uncertainty through
+automatic and manual question evidence. The transcript UI explains these markers;
+speaker confirmation explains that labels must be selected separately in each
+part where the candidate speaks. These helpers are not yet connected to the
+provider coordinator. Full-length runtime acceptance remains outstanding.

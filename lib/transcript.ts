@@ -1,5 +1,5 @@
 import { z } from 'zod';
-export const utteranceSchema = z.object({ id: z.string(), speaker: z.string().nullable(), text: z.string(), startMs: z.number().int().nonnegative(), endMs: z.number().int().positive(), overlap: z.boolean(), corrected: z.boolean().optional(), attributionCorrected:z.boolean().optional() });
+export const utteranceSchema = z.object({ id: z.string(), speaker: z.string().nullable(), text: z.string(), startMs: z.number().int().nonnegative(), endMs: z.number().int().positive(), overlap: z.boolean(), boundaryUncertain:z.boolean().optional(), corrected: z.boolean().optional(), attributionCorrected:z.boolean().optional() });
 export const transcriptSchema = z.object({ version: z.literal(1), model: z.literal('gpt-4o-transcribe-diarize'), audioSha256: z.string(), durationMs: z.number(), utterances: z.array(utteranceSchema).max(20000) });
 export type Transcript = z.infer<typeof transcriptSchema>;
 const providerSchema = z.object({ duration: z.number().positive().max(3602), segments: z.array(z.object({ text: z.string().max(50000), speaker: z.string().max(100).nullish(), start: z.number().nonnegative(), end: z.number().positive() })).max(20000), usage: z.object({ type: z.literal('tokens'), input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() }).optional() });

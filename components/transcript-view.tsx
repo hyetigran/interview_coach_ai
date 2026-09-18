@@ -41,6 +41,7 @@ export function TranscriptView({ reviewId }: { reviewId: string }) {
     <ol className="space-y-4">{visible.map(utterance => <li key={utterance.id} className="rounded-md border p-3">
       <Button variant="ghost" onClick={() => { if (audio.current) { audio.current.currentTime = utterance.startMs / 1000; void audio.current.play().catch(() => {}); } }} aria-label={`Play passage at ${Math.floor(utterance.startMs / 60000)} minutes ${Math.floor(utterance.startMs / 1000) % 60} seconds`}>{Math.floor(utterance.startMs / 60000)}:{String(Math.floor(utterance.startMs / 1000) % 60).padStart(2, '0')}</Button>
       <span className="text-sm font-medium">{speakerName(utterance.speaker)}</span>
+      {utterance.boundaryUncertain && <span className="ml-2 text-sm">Near an audio processing cut — check the audio</span>}
       {utterance.overlap && <span className="ml-2 text-sm">Overlapping speech — check the audio</span>}
       <p className="mt-2 whitespace-pre-wrap">{utterance.text}</p>{utterance.corrected&&<p className="text-sm">Candidate-corrected wording · original audio range retained</p>}
       {utterance.attributionCorrected&&<p className="text-sm">Candidate-corrected attribution · original audio range retained</p>}

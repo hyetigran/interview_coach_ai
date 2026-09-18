@@ -6,7 +6,7 @@ import { transcriptSchema } from '../lib/transcript';
 type Environment = Pick<CloudflareEnv, 'DB' | 'MEDIA'>;
 type Row = { id: string; review_id: string; owner_id: string; transcript_id: string; speakers: string; revision: number; state: string; dispatch_state: string; retry_attempts:number };
 const active = "EXISTS(SELECT 1 FROM reviews JOIN transcriptions ON transcriptions.review_id=reviews.id WHERE reviews.id=speaker_confirmations.review_id AND reviews.owner_id=speaker_confirmations.owner_id AND reviews.lifecycle='active' AND reviews.input_revision=speaker_confirmations.revision AND transcriptions.id=speaker_confirmations.transcript_id AND transcriptions.state='ready' AND transcriptions.revision=speaker_confirmations.revision)";
-const inputSchema = z.object({ actionId: z.uuid(), transcriptId: z.string().min(1).max(120), speakers: z.array(z.string().min(1).max(100)).min(1).max(100) }).strict();
+const inputSchema = z.object({ actionId: z.uuid(), transcriptId: z.string().min(1).max(120), speakers: z.array(z.string().min(1).max(120)).min(1).max(100) }).strict();
 export class SpeakerError extends Error { constructor(public status: number, message: string) { super(message); } }
 export function createSpeakerModule(env: Environment, dispatch?: (id: string) => Promise<void>) {
   const db = env.DB;

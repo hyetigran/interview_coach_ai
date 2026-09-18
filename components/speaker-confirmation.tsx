@@ -19,6 +19,7 @@ export function SpeakerConfirmation({ reviewId, transcriptId, transcript }: { re
   return <section className="rounded-lg border p-4 space-y-3" aria-labelledby="voice-heading">
     <h4 id="voice-heading" className="font-medium">Which voice is yours?</h4>
     <p className="text-sm text-muted-foreground">Listen to the samples, then select every label that is your voice. One person may have several labels. You do not need to approve each passage.</p>
+    {transcript.utterances.some(u=>u.boundaryUncertain!==undefined)&&<p className="text-sm">This recording was transcribed in parts. Labels are independent in each part: listen and select your voice in every part where you speak.</p>}
     <audio ref={player} preload="metadata" controls aria-label="Speaker sample playback" src={`/api/reviews/${reviewId}/audio`} onTimeUpdate={() => { if (player.current && stopAt.current && player.current.currentTime >= stopAt.current) { player.current.pause(); stopAt.current = 0; } }} />
     <fieldset disabled={query.isPending || mutation.isPending || Boolean(saved)} className="space-y-2"><legend className="sr-only">Select your speaker labels</legend>
       {labels.map(label => { const sample = transcript.utterances.find(u => u.speaker === label && !u.overlap) ?? transcript.utterances.find(u => u.speaker === label)!; return <div key={label} className="flex items-center gap-3">

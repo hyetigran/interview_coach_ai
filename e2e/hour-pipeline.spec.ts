@@ -38,10 +38,12 @@ for(const kind of ['AUDIO','VIDEO'] as const){
       // A source with speech near the end is required; an excerpt-only result fails.
       expect(Math.max(...transcript.transcript.utterances.map((u:{endMs:number})=>u.endMs))).toBeGreaterThan(3500000);
       await page.reload();
-      const label=transcript.transcript.utterances.find((u:{speaker:string|null;text:string})=>u.speaker&&/event.driven/i.test(u.text))?.speaker;
-      expect(label,'Fixture must contain the candidate’s event-driven-service answer').toBeTruthy();
-      const candidate=page.getByRole('checkbox',{name:'Speaker '+label,exact:true});
-      await candidate.focus();await candidate.press('Space');
+      const labels=[...new Set<string>(transcript.transcript.utterances.filter((u:{speaker:string|null;text:string})=>u.speaker&&/event.driven/i.test(u.text)).map((u:{speaker:string})=>u.speaker))];
+      for(const part of [1,2,3])expect(labels.some(label=>label.startsWith(`Part ${part} / `)),'Fixture must contain the candidate’s answer in every transcribed part').toBe(true);
+      for(const label of labels){
+        const candidate=page.getByRole('checkbox',{name:'Speaker '+label,exact:true});
+        await candidate.focus();await candidate.press('Space');
+      }
       await page.getByRole('button',{name:'Confirm my voice',exact:true}).click();
       await expect(page.getByText('Your voice is confirmed.',{exact:true})).toBeVisible();
       await expect.poll(async()=>(await(await context.request.get(endpoint+'/threads')).json())?.state,{timeout:180000,intervals:[3000,10000]}).toBe('ready');
