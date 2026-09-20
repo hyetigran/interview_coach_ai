@@ -143,3 +143,65 @@ test('historical reconciliation captures part usage but keeps the active partial
  await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(id).run();await module.cleanup();
  expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({settled_units:3});
 });
+
+test('saved individual receipts recover an interrupted hour without repeating paid submissions',async()=>{
+ const {id,env,transcriptId}=await fixture();let calls=0;
+ const mock=adapter(async()=>{calls++;return provider();}),module=createTranscriptionModule(env,mock.request);
+ await module.run(id);await module.run(id);await module.run(id);
+ // Simulate the final receipt write succeeding before its database publication.
+ await bucket.delete(`transcripts/${id}/${transcriptId}.provider.json`);
+ await bucket.delete(`transcripts/${id}/${transcriptId}.json`);
+ await db.prepare("UPDATE transcriptions SET state='unknown',result_key=NULL WHERE id=?").bind(transcriptId).run();
+ await db.prepare("UPDATE transcription_parts SET state='unknown',charge_units=NULL WHERE transcription_id=? AND part_index=2").bind(transcriptId).run();
+ await module.recoverReceipt(transcriptId);
+ expect((await module.status(id,id))?.state).toBe('ready');
+ expect((await module.status(id,id))?.transcript?.utterances.at(-1)?.endMs).toBe(3600000);
+ expect(calls).toBe(3);
+});
+
+test('a late part receipt reopens bounded recovery and durably dispatches remaining work on the same paid attempt',async()=>{
+ const {id,env,transcriptId}=await fixture();let calls=0;
+ const mock=adapter(async()=>{calls++;if(calls===1)throw new Error('Lost response');return provider();}),module=createTranscriptionModule(env,mock.request);
+ await module.run(id);
+ await db.prepare("UPDATE transcriptions SET state='reconciliation_exhausted',publication_attempts=3 WHERE id=?").bind(transcriptId).run();
+ await bucket.put(`transcripts/${id}/${transcriptId}-part-0.provider.json`,JSON.stringify({response:await provider().text()}));
+ expect((await module.status(id,id))?.retry).toMatchObject({canRetry:true,maximumUnits:0,attempt:0});
+ const dispatches:string[]=[];
+ const retry=createTranscriptionRetry(env,async(identity,job,attempt)=>{
+  dispatches.push(identity);await module.run(job,attempt);await module.run(job,attempt);
+ });
+ await retry.retry(id,id,{actionId:crypto.randomUUID(),transcriptId,attempt:0,publicationCycle:0});
+ await module.recoverReceipt(transcriptId);
+ expect((await module.status(id,id))?.state).toBe('queued');
+ expect(calls).toBe(1);
+ await retry.reconcile();await retry.reconcile();
+ expect(dispatches).toHaveLength(1);
+ expect((await module.status(id,id))?.state).toBe('ready');
+ expect(calls).toBe(3);
+ expect(await db.prepare('SELECT paid_attempt FROM transcriptions WHERE id=?').bind(transcriptId).first()).toEqual({paid_attempt:0});
+});
+
+test('reconciliation resumes after receipt consumption was interrupted before continuation publication',async()=>{
+ const {id,env,transcriptId}=await fixture();let calls=0;
+ const mock=adapter(async()=>{calls++;return provider();}),module=createTranscriptionModule(env,mock.request);
+ await module.run(id);
+ await db.prepare("UPDATE transcriptions SET state='publishing',started_at=1,publication_attempts=1,publication_deadline=? WHERE id=?").bind(Date.now()+900000,transcriptId).run();
+ await module.reconcileReceipts();
+ expect((await module.status(id,id))?.state).toBe('queued');
+ const dispatch=createTranscriptionRetry(env,async(_identity,job,attempt)=>{await module.run(job,attempt);await module.run(job,attempt);});
+ await dispatch.reconcile();
+ expect((await module.status(id,id))?.state).toBe('ready');expect(calls).toBe(3);
+});
+
+test('expired continuation dispatch releases only known usage and permits incremental retry',async()=>{
+ const {id,env,transcriptId}=await fixture();
+ const mock=adapter(async()=>provider()),module=createTranscriptionModule(env,mock.request);
+ await module.run(id);
+ await db.prepare("UPDATE transcriptions SET state='reconciliation' WHERE id=?").bind(transcriptId).run();
+ await module.recoverReceipt(transcriptId);
+ await db.prepare('UPDATE recovery_requests SET created_at=1 WHERE target_id=?').bind(transcriptId).run();
+ await createTranscriptionRetry(env).reconcile();await module.reconcileReceipts();
+ expect((await module.status(id,id))?.state).toBe('failed');
+ expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({state:'settled',settled_units:3});
+ expect((await module.status(id,id))?.retry).toMatchObject({canRetry:true,maximumUnits:4000000});
+});

@@ -51,6 +51,19 @@ export function createMultipartTranscription(env:Environment,request:typeof fetc
   if(!await current(row)){await env.MEDIA.delete(key);return null;}
   return saved;
  }
+ async function recover(row:Parent,audio:PreparationResult){
+  const parts=await store.list(row.id);
+  if(!parts.length)return null;
+  for(const part of parts){
+   if(!['submitting','unknown'].includes(part.state))continue;
+   const receipt=part.receipt_key?await env.MEDIA.get(part.receipt_key):null;
+   if(!receipt)throw new Error('A transcription part outcome is still unresolved.');
+   await consume(row,part,await receipt.json());
+  }
+  const refreshed=await store.list(row.id);
+  if(refreshed.some(part=>!['ready','queued'].includes(part.state)))throw new Error('A transcription part cannot resume.');
+  return aggregate(row,audio);
+ }
  async function run(row:Parent,audio:PreparationResult){
   let claimed:TranscriptionPart|null=null,savedReceipt=false;
   try{
@@ -117,5 +130,14 @@ export function createMultipartTranscription(env:Environment,request:typeof fetc
    return null;
   }finally{await settleStopped(row);}
  }
- return {run,consume,aggregate,settleStopped};
+ return {run,consume,aggregate,recover,settleStopped};
+}
+
+export async function hasSavedTranscriptionParts(env:Pick<CloudflareEnv,'DB'|'MEDIA'>,id:string){
+ const parts=await createTranscriptionPartStore(env.DB).list(id);
+ if(parts.some(part=>part.state==='ready')&&parts.every(part=>['ready','queued'].includes(part.state)))return true;
+ for(const part of parts){
+  if(['submitting','unknown'].includes(part.state)&&part.receipt_key&&await env.MEDIA.head(part.receipt_key))return true;
+ }
+ return false;
 }

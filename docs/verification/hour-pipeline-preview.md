@@ -112,3 +112,21 @@ An over-reservation receipt initially blocked cleanup by failing settlement.
 The regression now verifies that requested deletion removes its content while
 leaving the reservation unresolved. This does not reconcile the overage or make
 the local reservation a provider-enforced spending limit.
+
+## Individual receipt recovery and continuation
+
+Recovery now consumes saved individual part receipts under the original paid
+identity, including when the combined receipt was never written. Exhausted
+recovery can reopen a bounded publication window when a late individual receipt
+arrives. Recovering only part of a recording atomically records a continuation
+intent alongside the queued state; the existing scheduled dispatcher resumes
+unfinished parts in a new Workflow with the same paid attempt. A crash after
+receipt consumption can reconstruct that intent from completed and queued parts.
+Undispatched continuation expiry reports failure and reconciles completed usage;
+starting work acknowledges dispatch so an old intent cannot stop later parts.
+
+Local database/storage regressions cover these cases without new requests for
+completed parts. These tests use synthetic provider responses. They do not prove
+full-hour provider completion, production spending bounds, independent quality,
+or the five-candidate pilot. The multipart migration and runtime changes still
+require isolated deployed acceptance before #5, #13, or #15 can close.

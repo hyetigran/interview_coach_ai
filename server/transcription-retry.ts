@@ -1,3 +1,4 @@
+import {hasSavedTranscriptionParts} from './transcription-parts';
 import {transcriptionRetryMaximum} from './transcription-part-budget';
 import {providerConfigured} from './provider-configuration';
 import {accountSlotAvailable} from './account-slot';
@@ -18,7 +19,7 @@ export function createTranscriptionRetry(env:Environment,dispatch?:Dispatch) {
    if(prior.owner_id!==owner||prior.review_id!==review||prior.stage!=='transcription'||prior.target_id!==value.transcriptId||prior.target_attempt!==value.attempt)throw new RecoveryError(409,'This retry action belongs to different work.');
    if(prior.state==='applied'){await reconcile();return {accepted:true};}
   }
-  const receipt=await env.MEDIA.head(`transcripts/${review}/${transcriptionAttemptId(value.transcriptId,value.attempt)}.provider.json`);
+  const receipt=await env.MEDIA.head(`transcripts/${review}/${transcriptionAttemptId(value.transcriptId,value.attempt)}.provider.json`)||(await db.prepare("SELECT id FROM transcriptions WHERE id=? AND state='reconciliation_exhausted'").bind(value.transcriptId).first()&&await hasSavedTranscriptionParts(env,value.transcriptId));
   if(receipt){
    // A saved provider outcome must be published under its original paid identity.
    // Explicit publication gets a new bounded window, never a new reservation.
@@ -63,7 +64,7 @@ export function createTranscriptionRetry(env:Environment,dispatch?:Dispatch) {
  async function reconcile() {
   // End only undispatched queued work. Claimed work retains its reservation.
   await db.batch([
-   db.prepare("UPDATE transcriptions SET state='failed',error='Retry dispatch expired before transcription started.' WHERE state='queued' AND NOT EXISTS(SELECT 1 FROM transcription_parts p WHERE p.transcription_id=transcriptions.id AND p.paid_attempt=transcriptions.paid_attempt AND p.submitted_at IS NOT NULL) AND EXISTS(SELECT 1 FROM recovery_requests q WHERE q.id=transcriptions.recovery_action_id AND q.state='applied' AND q.dispatch_state<>'sent' AND q.created_at<?)").bind(Date.now()-15*60000),
+   db.prepare("UPDATE transcriptions SET state='failed',error='Retry dispatch expired before transcription started.' WHERE state='queued' AND EXISTS(SELECT 1 FROM recovery_requests q WHERE q.id=transcriptions.recovery_action_id AND q.state='applied' AND q.dispatch_state<>'sent' AND q.created_at<?)").bind(Date.now()-15*60000),
    db.prepare("UPDATE processing_budget SET state='settled',settled_units=0 WHERE state='reserved' AND EXISTS(SELECT 1 FROM transcriptions t JOIN recovery_requests q ON q.id=t.recovery_action_id WHERE processing_budget.id=t.id||'-attempt-'||t.paid_attempt AND t.state='failed' AND NOT EXISTS(SELECT 1 FROM transcription_parts p WHERE p.transcription_id=t.id AND p.paid_attempt=t.paid_attempt AND p.submitted_at IS NOT NULL) AND q.dispatch_state<>'sent' AND q.created_at<?)").bind(Date.now()-15*60000),
   ]);
   if(!dispatch)return;
