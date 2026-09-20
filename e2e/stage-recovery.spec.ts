@@ -59,10 +59,12 @@ for (const stage of ['preparation', 'publication'] as const) {
       const button=page.getByRole('button',{name:stage==='preparation'?'Retry preparation':'Publish saved transcript',exact:true});
       await expect(button).toBeVisible();
       const submitted=page.waitForRequest(request=>new URL(request.url()).pathname===target&&request.method()==='POST');
+      const accepted=page.waitForResponse(response=>new URL(response.url()).pathname===target&&response.request().method()==='POST');
       await button.focus();await button.press('Enter');
       const action=(await submitted).postDataJSON();
-      const duplicates=await Promise.all([1,2].map(()=>context.request.post(target,{headers:{origin},data:action})));
-      for(const response of duplicates)expect(response.status()).toBe(202);
+      expect((await accepted).status()).toBe(202);
+      await page.close();
+      page=await context.newPage();
       await page.goto('/reviews');await page.goto(`/reviews/${review.id}`);
       await expect.poll(async()=>(await(await context.request.get(endpoint+'/transcript')).json()).state,{timeout:100000}).toBe('ready');
       await expect(page.getByText('Recording prepared',{exact:true})).toBeVisible({timeout:100000});
@@ -71,6 +73,8 @@ for (const stage of ['preparation', 'publication'] as const) {
       expect(current.id).toBe(transcriptId);expect(current.transcript).toEqual(transcript);
       const preparation=await(await context.request.get(endpoint+'/processing')).json();
       expect(preparation.id).toBe(job);expect(preparation.retry.attempt).toBe(stage==='preparation'?1:0);
+      const duplicates=await Promise.all([1,2].map(()=>context.request.post(target,{headers:{origin},data:action})));
+      for(const response of duplicates)expect(response.status()).toBe(202);
       const ledger=JSON.parse(execFileSync('pnpm',['exec','wrangler','d1','execute','DB',...databaseFlags,'--json','--command',`SELECT id,operation,reserved_units,state,settled_units FROM processing_budget WHERE id LIKE ${sql('%'+upload+'%')}`],{encoding:'utf8',timeout:60000}));
       expect(ledger[0].results).toEqual([{id:transcriptId,operation:'synthetic-recovery-fixture',reserved_units:0,state:'settled',settled_units:0}]);
       const attempts=JSON.parse(execFileSync('pnpm',['exec','wrangler','d1','execute','DB',...databaseFlags,'--json','--command',`SELECT paid_attempt,publication_retries FROM transcriptions WHERE id=${sql(transcriptId)}`],{encoding:'utf8',timeout:60000}));
