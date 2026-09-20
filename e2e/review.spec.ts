@@ -74,11 +74,21 @@ test('invited candidate creates, reopens after sign-in, and deletes a review', a
     header.setUint32(24, 16000, true); header.setUint32(28, 32000, true); header.setUint16(32, 2, true); header.setUint16(34, 16, true); header.setUint32(40, size - 44, true);
     const audioPath = join(folder, 'synthetic.wav'); writeFileSync(audioPath, bytes);
     await page.route('**/parts/2', route => route.abort('failed'), { times: 1 });
+    let releaseMedia!:()=>void;
+    const mediaGate=new Promise<void>(resolve=>{releaseMedia=resolve;});
+    await page.route(endpoint+'/media',async route=>{await mediaGate;await route.continue();});
+    try {
+      await page.reload();
+      await expect(page.getByLabel('Interview recording file',{exact:true})).toBeDisabled();
+    } finally {releaseMedia();}
+    await expect(page.getByLabel('Interview recording file', { exact: true })).toBeEnabled();
+    await page.unroute(endpoint+'/media');
     await page.getByLabel('Interview recording file', { exact: true }).setInputFiles(audioPath);
     await page.getByRole('button', { name: 'Upload recording', exact: true }).click();
     await expect(page.getByRole('alert').filter({ hasText: /fetch|network/i })).toBeVisible();
     await page.reload();
     await expect(page.getByText(/Reselect the original file to resume/)).toBeVisible();
+    await expect(page.getByLabel('Interview recording file', { exact: true })).toBeEnabled();
     await page.getByLabel('Interview recording file', { exact: true }).setInputFiles(audioPath);
     await page.getByRole('button', { name: 'Resume upload', exact: true }).click();
     await expect(page.getByLabel('Private interview recording')).toBeVisible({ timeout: 30000 });
@@ -101,6 +111,7 @@ test('invited candidate creates, reopens after sign-in, and deletes a review', a
     await page.getByRole('button', { name: 'Create review', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Video interview' })).toBeVisible();
     const videoUrl = page.url(); const videoEndpoint = origin + '/api' + new URL(videoUrl).pathname;
+    await expect(page.getByLabel('Interview recording file', { exact: true })).toBeEnabled();
     await page.getByLabel('Interview recording file', { exact: true }).setInputFiles(videoPath);
     await page.getByRole('button', { name: 'Upload recording', exact: true }).click();
     await expect(page.getByText('interview.mp4', { exact: true })).toBeVisible();
