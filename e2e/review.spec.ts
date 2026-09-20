@@ -91,7 +91,8 @@ test('invited candidate creates, reopens after sign-in, and deletes a review', a
     header.setUint32(4, size - 8, true); header.setUint32(16, 16, true); header.setUint16(20, 1, true); header.setUint16(22, 1, true);
     header.setUint32(24, 16000, true); header.setUint32(28, 32000, true); header.setUint16(32, 2, true); header.setUint16(34, 16, true); header.setUint32(40, size - 44, true);
     const audioPath = join(folder, 'synthetic.wav'); writeFileSync(audioPath, bytes);
-    await page.route('**/parts/2', route => route.abort('failed'), { times: 1 });
+    let holdRefresh=false;
+    await page.route('**/parts/2', async route => {holdRefresh=true;await route.abort('failed');}, { times: 1 });
     let releaseMedia!:()=>void;
     const mediaGate=new Promise<void>(resolve=>{releaseMedia=resolve;});
     await page.route(endpoint+'/media',async route=>{await mediaGate;await route.continue();});
@@ -101,9 +102,17 @@ test('invited candidate creates, reopens after sign-in, and deletes a review', a
     } finally {releaseMedia();}
     await expect(page.getByLabel('Interview recording file', { exact: true })).toBeEnabled();
     await page.unroute(endpoint+'/media');
-    await page.getByLabel('Interview recording file', { exact: true }).setInputFiles(audioPath);
-    await page.getByRole('button', { name: 'Upload recording', exact: true }).click();
-    await expect(page.getByRole('alert').filter({ hasText: /fetch|network/i })).toBeVisible();
+    let releaseRefresh!:()=>void;
+    let refreshHeld=false;
+    const refreshGate=new Promise<void>(resolve=>{releaseRefresh=resolve;});
+    await page.route(endpoint+'/media',async route=>{if(holdRefresh){refreshHeld=true;await refreshGate;}await route.continue();});
+    try{
+      await page.getByLabel('Interview recording file', { exact: true }).setInputFiles(audioPath);
+      await page.getByRole('button', { name: 'Upload recording', exact: true }).click();
+      await expect.poll(()=>refreshHeld).toBe(true);
+      await expect(page.getByRole('alert').filter({ hasText: /fetch|network/i })).toBeVisible();
+      await expect(page.getByRole('button',{name:'Pause upload',exact:true})).toHaveCount(0);
+    }finally{releaseRefresh();await page.unrouteAll({behavior:'wait'});}
     await page.reload();
     await expect(page.getByText(/Reselect the original file to resume/)).toBeVisible();
     await expect(page.getByLabel('Interview recording file', { exact: true })).toBeEnabled();

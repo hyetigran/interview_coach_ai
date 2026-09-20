@@ -45,3 +45,11 @@ The preview job Worker containing the reviewed finalization fix was deployed as
 `ee7ea021-5dcb-4ed5-add9-ff3426926d45`. Historical hour-probe failures and costs are
 recorded separately in `multipart-preview.md`; they are not recovery-quality or
 independent coaching-quality evidence.
+
+The upload browser journey additionally holds the media-status refresh after a
+failed part. It requires the upload error to appear and Pause to disappear before
+the refresh is released, then resumes from persisted parts. Upload mutation
+completion no longer awaits that background refresh; every new attempt still
+loads the current persisted session before choosing its storage operation.
+Synthetic signup fixtures sharing one IP honor an observed, bounded server 429
+cooldown; other failures and a failed second attempt remain failures.

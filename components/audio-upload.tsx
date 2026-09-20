@@ -44,7 +44,9 @@ export function AudioUpload({ reviewId, ownerId }: { reviewId: string; ownerId: 
       }
       await api(path + `/uploads/${session.id}/complete`, { method: 'POST', body: '{}', signal });
     },
-    onSettled: () => client.invalidateQueries({ queryKey }),
+    // A stalled refresh must not hide an upload failure or keep Pause enabled.
+    // Each new upload attempt independently reads the persisted session first.
+    onSettled: () => { void client.invalidateQueries({ queryKey }); },
   });
   const savedBytes = current?.parts.reduce((sum, part) => sum + Math.min(PART_BYTES, current.size - (part.number - 1) * PART_BYTES), 0) ?? 0;
   return <section className="my-8 rounded-xl border p-6" aria-labelledby="recording-heading">
