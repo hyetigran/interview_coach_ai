@@ -41,6 +41,7 @@ for (const sample of cases) {
       const review = await created.json();
       endpoint = `/api/reviews/${review.id}`;
       await page.goto(`/reviews/${review.id}`);
+      await expect(page.getByLabel('Interview recording file', {exact:true})).toBeEnabled();
       await page.getByLabel('Interview recording file', {exact:true}).setInputFiles(source);
       const initiated = page.waitForResponse(response => new URL(response.url()).pathname === endpoint + '/media' && response.request().method() === 'POST');
       await page.getByRole('button', {name:'Upload recording', exact:true}).click();

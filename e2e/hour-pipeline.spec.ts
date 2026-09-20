@@ -22,6 +22,7 @@ for(const kind of ['AUDIO','VIDEO'] as const){
     expect(created.ok()).toBeTruthy();const review=await created.json(),endpoint='/api/reviews/'+review.id;
     try {
       await page.goto('/reviews/'+review.id);
+      await expect(page.getByLabel('Interview recording file',{exact:true})).toBeEnabled();
       await page.getByLabel('Interview recording file',{exact:true}).setInputFiles(source!);
       await page.getByRole('button',{name:'Upload recording',exact:true}).click();
       await expect.poll(async()=>(await(await context.request.get(endpoint+'/processing')).json())?.state,{timeout:15*60000,intervals:[3000,10000]}).toMatch(/^(ready|failed|cancelled)$/);
