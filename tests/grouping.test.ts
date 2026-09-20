@@ -100,6 +100,32 @@ test('grouping receipt recovery refuses changed prior evidence and deleted revie
  await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(review).run();await module.recoverReceipt(actionId,1);await module.cleanup();expect(await bucket.head(`grouping/${review}/group-${actionId}-1.provider.json`)).toBeNull();
 });
 
+test('failed receipt publication racing finalization exposes partial results without resubmission',async()=>{
+ const review='group-publication-finish-race',{actionId,speakers}=await setup(review,48);
+ let calls=0,entered!:()=>void,release!:()=>void;
+ const started=new Promise<void>(resolve=>{entered=resolve;}),proceed=new Promise<void>(resolve=>{release=resolve;});
+ const gated=new Proxy(bucket,{get(target,property){
+  if(property==='get')return async(key:string)=>{
+   const object=await target.get(key);
+   if(object&&key.endsWith('-1.provider.json'))return {...object,json:async()=>{entered();await proceed;return object.json();}};
+   return object;
+  };
+  const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;
+ }});
+ const module=createGroupingModule({DB:db,MEDIA:gated,OPENAI_API_KEY:'test'},async()=>{calls++;return response(calls===1?valid:{invalid:true});});
+ await module.begin(actionId);await speakers.resume(actionId);
+ await module.runChunk(actionId,0);await module.runChunk(actionId,1);
+ const recovery=module.recoverReceipt(actionId,1);
+ try{
+  await started;await module.finish(actionId);
+  expect((await module.status(review,review))?.state).toBe('running');
+ }finally{release();await recovery;}
+ const status=await module.status(review,review);
+ expect(status?.state).toBe('partial');expect(status?.groups).toHaveLength(1);
+ expect(status?.errors).toHaveLength(1);expect(calls).toBe(2);
+ expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind(`group-${actionId}-1`).first()).toEqual({state:'settled',settled_units:200});
+});
+
 test('explicit grouping retry reserves the suffix once and reuses an unchanged completed section',async()=>{
  const review='group-retry-reuse',{actionId,speakers}=await setup(review,48),env={DB:db,MEDIA:bucket,OPENAI_API_KEY:'test'};let calls=0;
  const grouping=createGroupingModule(env,async()=>{calls++;return calls===1?new Response('Quota',{status:429}):response({groups:[]});});

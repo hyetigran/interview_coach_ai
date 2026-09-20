@@ -43,10 +43,14 @@ for(const kind of ['AUDIO','VIDEO'] as const){
       for(const part of [1,2,3])expect(labels.some(label=>label.startsWith(`Part ${part} / `)),'Fixture must contain the candidate’s answer in every transcribed part').toBe(true);
       for(const label of labels){
         const candidate=page.getByRole('checkbox',{name:'Speaker '+label,exact:true});
+        await expect(candidate).toBeEnabled();
         await candidate.focus();await candidate.press('Space');
+        await expect(candidate).toBeChecked();
       }
       await page.getByRole('button',{name:'Confirm my voice',exact:true}).click();
       await expect(page.getByText('Your voice is confirmed.',{exact:true})).toBeVisible();
+      const confirmed=await(await context.request.get(endpoint+'/speakers')).json();
+      expect([...confirmed.speakers].sort()).toEqual([...labels].sort());
       await expect.poll(async()=>(await(await context.request.get(endpoint+'/threads')).json())?.state,{timeout:180000,intervals:[3000,10000]}).toBe('ready');
       await expect.poll(async()=>(await(await context.request.get(endpoint+'/coaching')).json())?.state,{timeout:300000,intervals:[3000,10000]}).toMatch(/^(ready|partial)$/);
       const coaching=await(await context.request.get(endpoint+'/coaching')).json();

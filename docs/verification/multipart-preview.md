@@ -53,3 +53,74 @@ expired leases in SQL. Scheduled cleanup retains the global object sweeps and
 late-write tombstones. A media regression verifies that status and replacement
 initialization do not call storage cleanup, expired reservations release, and a
 subsequent sweep still removes the expired object.
+
+## Video probe after request-path fix
+
+Preview app `6d5782ed-4b4d-4ea0-b203-b222126705fc` ran with the timing-fix job
+Worker `5b4b6282-d874-473d-9323-08216b33467c` and the same media service.
+The synthetic H.264/AAC MP4 was exactly 3600 seconds and 1,632,319 bytes.
+Media-state requests in the browser trace took 163–861 ms. Upload, video audio
+extraction, all three transcription parts, late speech, reload, and candidate
+confirmation passed. One completed coaching result contained six cited segments.
+
+The run nevertheless **failed** after seven minutes: grouping finished partial,
+with two sections ready and the third unable to publish its saved provider
+response against the evidence. No paid grouping request was repeated. The
+underlying validation failure has not been isolated; this result does not prove
+full video acceptance or saved preparation. The test's deletion cleanup produced
+a non-null upload `cleaned_at`; a later fetch found its grouping receipt absent.
+
+Known transcription usage settled to 90,690 units ($0.090690), and the three
+grouping calls to 1,692, 1,924, and 1,750 units. Two media reservations of 100,000
+units each remain unresolved. These figures exclude coaching and hosting/storage;
+they are not a total cost claim. Unresolved reservations remain held.
+
+The complete local suite after the request-path fix passed 214 tests, with three
+provider-only tests skipped. Type checking, lint, and the Worker build passed;
+both code-review axes reported no blocking findings.
+
+## Additional recovery probes
+
+The isolated deployed `stage-recovery.spec.ts` suite passed both scenarios in
+3.3 minutes: recovering preparation from saved artifacts and publishing a saved
+transcript. The fixtures verified duplicate actions, stable artifact identity,
+reload, deletion/retry denial, and zero settled provider cost. These seeded
+synthetic receipts exercise recovery, not actual provider reliability.
+
+The deployed grouping and coaching retry scenarios in `analysis-recovery.spec.ts`
+also passed (1.8 and 1.2 minutes). Their candidate-only/incomplete-evidence inputs
+avoid provider calls; each retry ledger settled to zero. These are focused smoke
+checks, not complete failure-injection coverage for #13.
+
+## Audio repeat and fixture limitation
+
+The audio repeat failed after 8.9 minutes. All three transcription parts were
+ready, but the grouping run was still `running` after the three-minute wait, with
+two sections in receipt reconciliation and one ready. Saved synthetic receipts showed a changed source identifier and a quote
+that did not occur in its referenced utterance; validation rejected them.
+The saved candidate selection also omitted Part 1's candidate label even though
+the test intended to select it. The fixture pressed the first checkbox while its
+fieldset was still disabled by the speaker-state request. The fixture now waits
+for each checkbox to become enabled, asserts it is checked, and verifies the
+persisted selection before continuing. This run cannot count as successful
+speaker confirmation or full audio acceptance. Provider diarization also assigned
+one Part 2 label to both question and answer speech, so phrase matching alone is
+not reliable attribution evidence. A permissioned recording and correction checks
+remain necessary; these synthetic failures are not independent quality scores.
+
+The deployed late-artifact cleanup check also passed (1.5 minutes): deletion
+rejected issued upload capabilities and subsequent access, and scheduled cleanup
+removed injected late originals, derivatives, and transcript artifacts. This
+injects storage writes; it does not simulate a live provider cancellation race.
+
+The audio failure exposed a finalization race: Workflow completion can observe a
+section publishing a receipt and leave its run running; failed publication did
+not recheck the aggregate. Receipt recovery now rechecks finalization on both
+success and failure. A gated regression races those operations and requires a
+partial run, the earlier ready group, retained billing, and no additional provider
+request after publication fails.
+
+On 2026-09-20 the user deferred tickets and acceptance work requiring sample
+interviews. The hour probes above are historical failures, not prerequisites for
+continuing the remaining recovery implementation. No further sample-interview
+runs or independent evaluation are claimed by this follow-up.
