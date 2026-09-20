@@ -51,13 +51,18 @@ export function createMediaModule(env: Environment) {
     for (const row of rows) { await db.prepare('UPDATE uploads SET cleanup_attempted_at=? WHERE id=?').bind(Date.now(), row.id).run(); try { await cleanupRow(row); } catch { /* Persisted tombstone is retried by the next sweep. */ } }
   }
   async function status(owner: string, review: string): Promise<MediaState> {
-    await authorize(owner, review); await cleanup();
+    await authorize(owner, review); await expireReviewUploads(owner, review);
     const row = await db.prepare('SELECT * FROM uploads WHERE review_id=? AND owner_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1').bind(review, owner).first<Row>();
     const usage = await db.prepare("SELECT SUM(CASE WHEN admitted_at IS NOT NULL THEN 1 ELSE 0 END) AS admitted, SUM(CASE WHEN admitted_at IS NULL AND state NOT IN ('cleanup','rejected') AND expires_at>? THEN 1 ELSE 0 END) AS reserved FROM uploads WHERE owner_id=?").bind(Date.now(), owner).first<{ admitted: number; reserved: number }>();
     return { upload: row ? await view(row) : null, admitted: usage?.admitted ?? 0, reserved: usage?.reserved ?? 0, allowance };
   }
+  async function expireReviewUploads(owner: string, review: string) {
+    // Request paths only retire this review's leases; scheduled cleanup reclaims
+    // objects and revisits tombstones without delaying unrelated recordings.
+    await db.prepare("UPDATE uploads SET state='cleanup' WHERE owner_id=? AND review_id=? AND admitted_at IS NULL AND state NOT IN ('cleanup','rejected') AND expires_at<=?").bind(owner, review, Date.now()).run();
+  }
   async function initiate(owner: string, review: string, input: unknown) {
-    const valid = inputSchema.parse(input); await authorize(owner, review); await cleanup();
+    const valid = inputSchema.parse(input); await authorize(owner, review); await expireReviewUploads(owner, review);
     const now = Date.now(), id = crypto.randomUUID();
     await db.prepare(`INSERT INTO uploads (id,owner_id,review_id,action_id,name,size,state,object_key,expires_at,created_at) SELECT ?,?,?,?,?,?,'initializing',?,?,? WHERE EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='active') AND NOT EXISTS(SELECT 1 FROM uploads WHERE review_id=? AND state<>'cleanup') AND (SELECT COUNT(*) FROM uploads WHERE owner_id=? AND (admitted_at IS NOT NULL OR (state<>'cleanup' AND expires_at>?)))<?`).bind(id, owner, review, valid.actionId, valid.name, valid.size, 'originals/' + id, now + UPLOAD_LEASE_MS, now, review, owner, review, owner, now, allowance).run();
     let row = await db.prepare("SELECT * FROM uploads WHERE review_id=? AND owner_id=? AND state<>'cleanup' ORDER BY created_at DESC LIMIT 1").bind(review, owner).first<Row>();

@@ -43,10 +43,13 @@ cover this case, nested ranges, and unknown speakers. Deployed full-hour audio
 and video acceptance must be repeated after the fix; independent recordings,
 labeling, quality comparison, and pilot candidates remain outstanding.
 
-The first video attempt after the timing fix stopped before upload: file
-selection began before the initial media-state request, and the upload button
-remained disabled. No paid processing was reached. File selection now stays
-disabled while recording state loads, and the acceptance fixtures wait for that
-control to become enabled. A local browser regression holds the media response,
-checks the disabled control, releases it, and completes upload, resume, playback,
-and deletion. Both review axes passed this additional fix.
+Two video attempts after the timing fix stopped before upload. The second trace
+established that the initial media-state response took 32.484 seconds: status
+awaited a global storage-cleanup sweep before returning. Neither attempt reached
+paid processing. File selection now stays disabled while recording state loads;
+a local browser regression verifies that guard and the subsequent upload flow.
+The server status and initialization paths now retire only the current review's
+expired leases in SQL. Scheduled cleanup retains the global object sweeps and
+late-write tombstones. A media regression verifies that status and replacement
+initialization do not call storage cleanup, expired reservations release, and a
+subsequent sweep still removes the expired object.

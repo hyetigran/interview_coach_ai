@@ -81,6 +81,31 @@ test('deletion invalidates issued capabilities and late completion cannot restor
   expect(await reviews.get('delete-owner', r.id)).toBeNull();
 });
 
+test('status and initialization retire expired leases without waiting for storage cleanup', async () => {
+  const owner = 'responsive-owner', r = await review(owner);
+  const expired = await upload(owner, r.id, wav(100));
+  const bucket = await runtime.getR2Bucket('MEDIA') as unknown as R2Bucket;
+  await bucket.put('originals/' + expired.id, wav(100));
+  await db.prepare('UPDATE uploads SET expires_at=0 WHERE id=?').bind(expired.id).run();
+  let cleanupCalls = 0;
+  const monitored = new Proxy(bucket, { get(target, prop) {
+    if (['delete', 'list', 'resumeMultipartUpload'].includes(String(prop))) {
+      return () => { cleanupCalls++; throw new Error('Storage cleanup unavailable'); };
+    }
+    const value = Reflect.get(target, prop);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const responsive = createMediaModule({ DB: db, MEDIA: monitored, AUTH_SECRET: 'responsive-test' });
+  expect(await responsive.status(owner, r.id)).toMatchObject({ upload: { state: 'cleanup' }, reserved: 0 });
+  const replacement = await responsive.initiate(owner, r.id, { name: 'replacement.wav', size: 100, actionId: crypto.randomUUID() });
+  expect(replacement.id).not.toBe(expired.id);
+  expect(replacement.state).toBe('uploading');
+  expect(cleanupCalls).toBe(0);
+  expect(await bucket.head('originals/' + expired.id)).not.toBeNull();
+  await media.cleanup();
+  expect(await bucket.head('originals/' + expired.id)).toBeNull();
+});
+
 test('invalid media releases reservation and forged or expired part permissions cannot write', async () => {
   const r = await review('invalid-owner'); const bytes = new Uint8Array(100);
   const u = await media.initiate('invalid-owner', r.id, { name: 'invalid.wav', size: bytes.length, actionId: crypto.randomUUID() });
