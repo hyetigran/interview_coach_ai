@@ -131,6 +131,10 @@ export function createGroupingModule(env:Environment, request:typeof fetch=fetch
       await db.prepare(`UPDATE grouping_runs SET state=CASE WHEN EXISTS(SELECT 1 FROM grouping_chunks WHERE run_id=? AND state<>'ready') THEN 'partial' ELSE 'ready' END WHERE id=? AND state IN ('running','partial') AND ${active} AND (SELECT COUNT(*) FROM grouping_chunks WHERE run_id=?)=total AND NOT EXISTS(SELECT 1 FROM grouping_chunks WHERE run_id=? AND state IN ('queued','preparing','submitting','publishing'))`).bind(id,id,id,id).run();
     }catch{
       await db.prepare(`UPDATE grouping_chunks SET state=CASE WHEN publication_attempts>=3 OR publication_deadline<=? THEN 'reconciliation_exhausted' ELSE 'reconciliation' END,error='Saved grouping could not be published against current evidence. Its receipt and unresolved billing remain retained; no provider request was repeated.' WHERE id=? AND attempt=? AND state='publishing' AND publication_attempts=? AND EXISTS(SELECT 1 FROM grouping_runs WHERE id=? AND ${active})`).bind(Date.now(),chunkId,chunk.attempt,claim.publication_attempts,id).run();
+    }finally{
+      // Workflow finalization may have observed this publication in flight.
+      // Recheck after failure as well as success so stopped sections surface as partial.
+      await finish(id);
     }
   }
   async function reconcileReceipts() {
