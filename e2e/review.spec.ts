@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 function invite(email: string) {
   const flags = process.env.E2E_PREVIEW_ORIGIN ? ['--remote', '--env', 'preview'] : [];
@@ -22,7 +23,24 @@ test('invited candidate creates, reopens after sign-in, and deletes a review', a
   await page.getByLabel('Email', { exact: true }).fill(email);
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByLabel('Invitation code').fill(token);
-  await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  async function submitRegistration() {
+    const response=page.waitForResponse(response=>response.url().endsWith('/api/auth/sign-up/email')&&response.request().method()==='POST');
+    await page.getByRole('button', { name: 'Create account', exact: true }).click();
+    return response;
+  }
+  let registration=await submitRegistration();
+  if(registration.status()===429){
+    // Synthetic candidates share one IP. Honor only the server's bounded
+    // cooldown, just as the API registration fixtures do.
+    const retryAfter=await registration.headerValue('x-retry-after');
+    expect(retryAfter).toMatch(/^\d+$/);
+    const seconds=Number(retryAfter);
+    expect(Number.isFinite(seconds)).toBe(true);expect(seconds).toBeGreaterThanOrEqual(0);expect(seconds).toBeLessThanOrEqual(10);
+    await expect(page.locator('form').getByRole('alert')).toBeVisible();
+    await delay(seconds*1000+100);
+    registration=await submitRegistration();
+  }
+  expect(registration.ok(),`Registration returned HTTP ${registration.status()}`).toBeTruthy();
   await expect(page.getByRole('heading', { name: 'Your reviews' })).toBeVisible({ timeout: 15000 });
   await page.getByLabel('Review title').fill('Hiring manager discussion');
   await page.getByLabel('Target role').fill('Software engineer');
