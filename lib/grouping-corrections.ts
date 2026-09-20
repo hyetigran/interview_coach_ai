@@ -11,7 +11,7 @@ export function resolveManualGroups(input:unknown,transcript:Transcript,transcri
  const evidence=(ref:z.infer<typeof span>,role:'question'|'answer'):Evidence=>{
   const source=sources.get(ref.utteranceId);if(!source||ref.start>=ref.end||ref.end>source.text.length||!boundary(source.text,ref.start)||!boundary(source.text,ref.end))throw new Error('Select a valid passage from this transcript.');
   if(source.speaker&&candidateSpeakers.includes(source.speaker)!==(role==='answer'))throw new Error('The selected passage has the wrong speaker role. Correct attribution first.');
-  return {transcriptId,utteranceId:source.id,quote:source.text.slice(ref.start,ref.end),start:ref.start,end:ref.end,startMs:source.startMs,endMs:source.endMs,position:source.position,uncertain:!source.speaker||source.overlap};
+  return {transcriptId,utteranceId:source.id,quote:source.text.slice(ref.start,ref.end),start:ref.start,end:ref.end,startMs:source.startMs,endMs:source.endMs,position:source.position,uncertain:!source.speaker||source.overlap||Boolean(source.boundaryUncertain)};
  };
  const compare=(a:Evidence,b:Evidence)=>a.position-b.position||a.start-b.start;
  const resolved=groups.map(group=>{const question=group.question.map(s=>evidence(s,'question')).sort(compare),answers=group.answers.map(s=>evidence(s,'answer')).sort(compare);if(answers.some(answer=>compare(answer,question[0])<0))throw new Error('An answer cannot precede its question.');return {key:group.key,id:JSON.stringify([transcriptId,question[0].utteranceId,question[0].start,question[0].end]),question,answers,parent:group.parent,uncertain:[...question,...answers].some(e=>e.uncertain)};});
@@ -19,7 +19,7 @@ export function resolveManualGroups(input:unknown,transcript:Transcript,transcri
  const byKey=new Map(resolved.map(g=>[g.key,g]));
  return resolved.map(group=>{const parent=group.parent?byKey.get(group.parent):null;if(group.parent&&!parent)throw new Error('Choose a parent question in this transcript.');if(parent&&compare(parent.question[0],group.question[0])>=0)throw new Error('A follow-up parent must be an earlier question; cycles are not allowed.');return {id:group.id,question:group.question,answers:group.answers,parentId:parent?.id??null,uncertain:group.uncertain};});
 }
-export const attributionSchema=z.object({transcriptId:z.string().min(1).max(160),candidateSpeakers:z.array(z.string().min(1).max(100)).max(100),passages:z.array(z.object({utteranceId:z.string().min(1).max(160),role:z.enum(['candidate','interviewer','unknown']),overlap:z.boolean()}).strict()).max(20000)}).strict();
+export const attributionSchema=z.object({transcriptId:z.string().min(1).max(160),candidateSpeakers:z.array(z.string().min(1).max(120)).max(100),passages:z.array(z.object({utteranceId:z.string().min(1).max(160),role:z.enum(['candidate','interviewer','unknown']),overlap:z.boolean()}).strict()).max(20000)}).strict();
 export function correctAttribution(transcript:Transcript,input:z.infer<typeof attributionSchema>,identity:string) {
  const labels=new Set(transcript.utterances.map(u=>u.speaker).filter(Boolean));if(input.candidateSpeakers.some(label=>!labels.has(label)))throw new Error('Select labels present in this transcript.');
  const ids=new Set(transcript.utterances.map(u=>u.id));if(new Set(input.passages.map(p=>p.utteranceId)).size!==input.passages.length||input.passages.some(p=>!ids.has(p.utteranceId)))throw new Error('Each corrected passage must belong to this transcript and occur once.');

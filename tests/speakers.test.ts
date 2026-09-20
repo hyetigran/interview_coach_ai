@@ -142,3 +142,12 @@ test('completed hosted compression retains its cost reservation and allows speak
   expect((await module.resume(input.actionId))?.speakers).toEqual(['A','C']);
   expect(await db.prepare('SELECT state,reserved_units,settled_units FROM processing_budget WHERE id=?').bind(bill).first()).toEqual({state:'reserved',reserved_units:100000,settled_units:null});
 });
+
+test('part-scoped maximum provider labels persist through speaker confirmation',async()=>{
+ const review='speaker-part-label',input=await setup(review);
+ const speaker='Part 3 / '+'x'.repeat(100);
+ await bucket.put('document-'+review,JSON.stringify({version:1,model:'gpt-4o-transcribe-diarize',audioSha256:'hash',durationMs:3000,utterances:[{id:'u',speaker,text:'My answer.',startMs:0,endMs:1000,overlap:false,boundaryUncertain:true}]}));
+ const module=createSpeakerModule({DB:db,MEDIA:bucket});
+ await module.confirm(review,review,{...input,speakers:[speaker]});
+ expect((await module.status(review,review))?.speakers).toEqual([speaker]);
+});

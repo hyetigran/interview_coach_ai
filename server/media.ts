@@ -1,3 +1,4 @@
+import {cleanupTranscriptionArtifacts} from './transcription-part-lifecycle';
 import {createCorrectionModule} from './transcript-corrections';
 import { createCoachingModule } from './coaching';
 import { createGroupingModule } from './grouping';
@@ -33,6 +34,8 @@ export function createMediaModule(env: Environment) {
     do { const page = await bucket.list({ prefix: 'audio/' + id + '/', cursor }); if (page.objects.length) await bucket.delete(page.objects.map(object => object.key)); cursor = page.truncated ? page.cursor : undefined; } while (cursor);
   }
   async function cleanupRow(row: Row) {
+    const transcriptions=(await db.prepare('SELECT t.id FROM transcriptions t JOIN processing_jobs p ON p.id=t.job_id WHERE p.upload_id=? AND t.review_id=? AND t.owner_id=?').bind(row.id,row.review_id,row.owner_id).all<{id:string}>()).results;
+    for(const transcription of transcriptions)await cleanupTranscriptionArtifacts(env,transcription.id);
     // Keep tombstones and object keys: a late completion can write after an earlier cleanup.
     await Promise.all([row.multipart_id ? bucket.resumeMultipartUpload(row.object_key, row.multipart_id).abort() : Promise.resolve(), bucket.delete(row.object_key), cleanupAudio(row.id), bucket.delete([`transcripts/${row.review_id}/transcript-prepare-${row.id}.json`, `transcripts/${row.review_id}/transcript-prepare-${row.id}.provider.json`])]);
     await db.prepare('DELETE FROM upload_parts WHERE upload_id=?').bind(row.id).run();

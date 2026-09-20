@@ -27,7 +27,7 @@ afterAll(() => runtime.dispose());
 function processor() {
   const storage = new Map<string, unknown>();
   let queue = Promise.resolve();
-  const forward = vi.fn(async () => new Response('audio'));
+  const forward = vi.fn(async (_request:Request) => new Response('audio'));
   const ctx = {
     storage:{get:async (key:string)=>storage.get(key),put:async (key:string,value:unknown)=>{storage.set(key,value);}},
     blockConcurrencyWhile: (operation:()=>Promise<unknown>) => {const next=queue.then(operation);queue=next.then(()=>{},()=>{});return next;},
@@ -67,6 +67,15 @@ test('private endpoints reject browser origins and unsupported routes',async()=>
   expect((await service.fetch(new Request('https://media.internal/health'))).status).toBe(404);
   expect((await service.fetch(new Request('https://media.internal'+path(4),{method:'POST',headers:{origin:'https://evil.example'}}))).status).toBe(404);
   expect(service.startAndWaitForPorts).not.toHaveBeenCalled();
+});
+test('private compression forwards only the supported part-bundle selector',async()=>{
+  const id=path(4).slice('/operations/'.length);
+  await db.prepare("INSERT INTO transcriptions(id,review_id,owner_id,job_id,revision,state,started_at) VALUES(?,?,?, ?,1,'encoding',?)").bind('transcript-'+id,id,'owner-4',id,Date.now()).run();
+  const {service,forward}=processor();
+  const response=await service.fetch(new Request('https://media.internal/compression/transcript-'+id,{method:'POST',body:'audio',headers:{'x-transcription-parts':'1','x-untrusted':'do-not-forward'}}));
+  expect(response.status).toBe(200);await response.text();
+  const headers=forward.mock.calls[0][0].headers;
+  expect(headers.get('x-transcription-parts')).toBe('1');expect(headers.has('x-untrusted')).toBe(false);
 });
 test('insufficient shared allowance does not start compute',async()=>{
   await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units) VALUES('other','other',49800000)").run();

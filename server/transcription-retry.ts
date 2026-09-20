@@ -1,8 +1,10 @@
+import {hasSavedTranscriptionParts} from './transcription-parts';
+import {transcriptionRetryMaximum} from './transcription-part-budget';
 import {providerConfigured} from './provider-configuration';
 import {accountSlotAvailable} from './account-slot';
 import {z} from 'zod';
 import {RecoveryError} from './recovery';
-import {transcriptionAttemptId,TRANSCRIPTION_RESERVATION} from '../lib/transcription-attempt';
+import {transcriptionAttemptId} from '../lib/transcription-attempt';
 import type {PreparationResult} from './processing';
 type Environment=Pick<CloudflareEnv,'DB'|'MEDIA'|'OPENAI_API_KEY'|'OPENAI_JOBS_CONFIGURED'>;
 type Dispatch=(id:string,jobId:string,attempt:number)=>Promise<void>;
@@ -17,7 +19,7 @@ export function createTranscriptionRetry(env:Environment,dispatch?:Dispatch) {
    if(prior.owner_id!==owner||prior.review_id!==review||prior.stage!=='transcription'||prior.target_id!==value.transcriptId||prior.target_attempt!==value.attempt)throw new RecoveryError(409,'This retry action belongs to different work.');
    if(prior.state==='applied'){await reconcile();return {accepted:true};}
   }
-  const receipt=await env.MEDIA.head(`transcripts/${review}/${transcriptionAttemptId(value.transcriptId,value.attempt)}.provider.json`);
+  const receipt=await env.MEDIA.head(`transcripts/${review}/${transcriptionAttemptId(value.transcriptId,value.attempt)}.provider.json`)||(await db.prepare("SELECT id FROM transcriptions WHERE id=? AND state='reconciliation_exhausted'").bind(value.transcriptId).first()&&await hasSavedTranscriptionParts(env,value.transcriptId));
   if(receipt){
    // A saved provider outcome must be published under its original paid identity.
    // Explicit publication gets a new bounded window, never a new reservation.
@@ -36,12 +38,14 @@ export function createTranscriptionRetry(env:Environment,dispatch?:Dispatch) {
   if(!row)throw new RecoveryError(409,'Prepared audio is unavailable.');
   const audio=JSON.parse(row.result) as PreparationResult;
   if(!await env.MEDIA.head(audio.audioKey??audio.sourceKey))throw new RecoveryError(409,'Prepared audio is unavailable.');
+  const maximum=await transcriptionRetryMaximum(db,value.transcriptId);
   const nextCall=transcriptionAttemptId(value.transcriptId,value.attempt+1);
   // Every statement repeats the current-input and account-slot checks. D1 batch
   // serializes reservation and queue publication in one transaction.
   const eligible=`SELECT t.id FROM transcriptions t JOIN reviews r ON r.id=t.review_id
    WHERE t.id=? AND t.owner_id=? AND t.review_id=? AND t.paid_attempt=? AND t.paid_attempt<2
    AND t.state IN ('failed','configuration','budget_blocked','reconciliation_exhausted')
+   AND NOT EXISTS(SELECT 1 FROM transcription_parts p WHERE p.transcription_id=t.id AND p.state IN ('submitting','unknown'))
    AND r.lifecycle='active' AND r.input_revision=t.revision
    AND NOT EXISTS(SELECT 1 FROM processing_budget WHERE id=CASE WHEN t.paid_attempt=0 THEN t.id ELSE t.id||'-attempt-'||t.paid_attempt END AND state='reserved')
    AND ${accountSlotAvailable('t.owner_id',undefined,"t.id||'-attempt-'||(t.paid_attempt+1)")}`;
@@ -49,7 +53,7 @@ export function createTranscriptionRetry(env:Environment,dispatch?:Dispatch) {
   const pending="EXISTS(SELECT 1 FROM recovery_requests WHERE id=? AND state='pending' AND stage='transcription' AND target_id=? AND target_attempt=?)";
   await db.batch([
    db.prepare(`INSERT OR IGNORE INTO recovery_requests(id,review_id,owner_id,stage,target_id,target_attempt,input_revision,context_revision,created_at) SELECT ?,?,?,'transcription',?,?,?,?,? WHERE EXISTS(${eligible})`).bind(value.actionId,review,owner,value.transcriptId,value.attempt,current.input_revision,current.coaching_revision,Date.now(),...args),
-   db.prepare(`INSERT OR IGNORE INTO processing_budget(id,operation,reserved_units) SELECT ?,'openai-diarization-v1',? WHERE EXISTS(${eligible}) AND ${pending} AND COALESCE((SELECT SUM(CASE WHEN state='reserved' THEN reserved_units ELSE COALESCE(settled_units,0) END) FROM processing_budget),0)+?<=50000000`).bind(nextCall,TRANSCRIPTION_RESERVATION,...args,value.actionId,value.transcriptId,value.attempt,TRANSCRIPTION_RESERVATION),
+   db.prepare(`INSERT OR IGNORE INTO processing_budget(id,operation,reserved_units) SELECT ?,'openai-diarization-v1',? WHERE EXISTS(${eligible}) AND ${pending} AND COALESCE((SELECT SUM(CASE WHEN state='reserved' THEN reserved_units ELSE COALESCE(settled_units,0) END) FROM processing_budget),0)+?<=50000000`).bind(nextCall,maximum,...args,value.actionId,value.transcriptId,value.attempt,maximum),
    db.prepare(`UPDATE transcriptions SET paid_attempt=paid_attempt+1,recovery_action_id=?,state='queued',error=NULL,result_key=NULL,request_id=NULL,started_at=NULL,finished_at=NULL,publication_attempts=0,publication_deadline=0,publication_checked_at=0 WHERE id IN (${eligible}) AND ${pending} AND EXISTS(SELECT 1 FROM processing_budget WHERE id=? AND state='reserved')`).bind(value.actionId,...args,value.actionId,value.transcriptId,value.attempt,nextCall),
    db.prepare("UPDATE recovery_requests SET state='applied' WHERE id=? AND EXISTS(SELECT 1 FROM transcriptions WHERE recovery_action_id=? AND id=? AND paid_attempt=?)").bind(value.actionId,value.actionId,value.transcriptId,value.attempt+1),
   ]);
@@ -61,7 +65,7 @@ export function createTranscriptionRetry(env:Environment,dispatch?:Dispatch) {
   // End only undispatched queued work. Claimed work retains its reservation.
   await db.batch([
    db.prepare("UPDATE transcriptions SET state='failed',error='Retry dispatch expired before transcription started.' WHERE state='queued' AND EXISTS(SELECT 1 FROM recovery_requests q WHERE q.id=transcriptions.recovery_action_id AND q.state='applied' AND q.dispatch_state<>'sent' AND q.created_at<?)").bind(Date.now()-15*60000),
-   db.prepare("UPDATE processing_budget SET state='settled',settled_units=0 WHERE state='reserved' AND EXISTS(SELECT 1 FROM transcriptions t JOIN recovery_requests q ON q.id=t.recovery_action_id WHERE processing_budget.id=t.id||'-attempt-'||t.paid_attempt AND t.state='failed' AND q.dispatch_state<>'sent' AND q.created_at<?)").bind(Date.now()-15*60000),
+   db.prepare("UPDATE processing_budget SET state='settled',settled_units=0 WHERE state='reserved' AND EXISTS(SELECT 1 FROM transcriptions t JOIN recovery_requests q ON q.id=t.recovery_action_id WHERE processing_budget.id=t.id||'-attempt-'||t.paid_attempt AND t.state='failed' AND NOT EXISTS(SELECT 1 FROM transcription_parts p WHERE p.transcription_id=t.id AND p.paid_attempt=t.paid_attempt AND p.submitted_at IS NOT NULL) AND q.dispatch_state<>'sent' AND q.created_at<?)").bind(Date.now()-15*60000),
   ]);
   if(!dispatch)return;
   const rows=(await db.prepare("SELECT q.id,t.job_id,t.paid_attempt FROM recovery_requests q JOIN transcriptions t ON t.recovery_action_id=q.id JOIN reviews r ON r.id=t.review_id WHERE q.stage='transcription' AND q.state='applied' AND q.dispatch_state<>'sent' AND q.created_at>? AND q.dispatch_attempts<3 AND (q.dispatch_state='pending' OR q.dispatch_started_at<?) AND t.state='queued' AND r.lifecycle='active' AND r.input_revision=t.revision ORDER BY q.created_at LIMIT 10").bind(Date.now()-15*60000,Date.now()-60000).all<{id:string;job_id:string;paid_attempt:number}>()).results;

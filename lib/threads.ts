@@ -17,7 +17,7 @@ export function resolveGroups(input:unknown, transcript:Transcript, transcriptId
     const start=source.text.indexOf(ref.quote);
     if(start<0 || source.text.indexOf(ref.quote,start+1)>=0) throw new Error('Quote must match exactly once.');
     if(source.speaker && candidateSpeakers.includes(source.speaker)!==(role==='answer')) throw new Error('Evidence has the wrong confirmed speaker role.');
-    return {transcriptId,utteranceId:source.id,quote:ref.quote,start,end:start+ref.quote.length,startMs:source.startMs,endMs:source.endMs,position:source.position,uncertain:!source.speaker||source.overlap};
+    return {transcriptId,utteranceId:source.id,quote:ref.quote,start,end:start+ref.quote.length,startMs:source.startMs,endMs:source.endMs,position:source.position,uncertain:!source.speaker||source.overlap||Boolean(source.boundaryUncertain)};
   }
   function questionId(anchor:Evidence) {
     const source=sources.get(anchor.utteranceId)!;

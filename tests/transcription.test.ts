@@ -1,3 +1,5 @@
+import {assembleTranscriptionParts} from '../lib/transcription-assembly';
+import {reconcileProviderBilling} from '../server/historical-billing';
 import {createProcessingModule} from '../server/processing';
 import {createTranscriptionRetry} from '../server/transcription-retry';
 import { afterAll, beforeAll, expect, test } from 'vitest';
@@ -23,6 +25,56 @@ async function setup(id: string) {
 function adapter(paid: () => Promise<Response>): typeof fetch {
   return async input => String(input).includes('/compression/') ? new Response(new Uint8Array([1,2,3]), { headers: { 'content-length': '3' } }) : paid();
 }
+
+test('multipart receipt recovery preserves evidence and settles only the current attempt',async()=>{
+ const id='multipart-receipt',env=await setup(id),transcriptId='transcript-'+id,call=transcriptId+'-attempt-1';
+ const transcript=assembleTranscriptionParts(transcriptId,'a'.repeat(64),2000,[0,1].map(index=>({index,offsetMs:index*1000,durationMs:1000,response:{duration:1,segments:[{start:0,end:1,speaker:'A',text:'Speech.'}]}})));
+ await db.prepare("UPDATE transcriptions SET state='unknown',paid_attempt=1 WHERE id=?").bind(transcriptId).run();
+ await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units,state,settled_units) VALUES(?,'openai-diarization-v1',6000000,'settled',3)").bind(transcriptId).run();
+ await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units) VALUES(?,'openai-diarization-v1',2000000)").bind(call).run();
+ await bucket.put(`transcripts/${id}/${call}.provider.json`,JSON.stringify({kind:'transcription-parts-v1',callId:call,chargeUnits:3,transcript}));
+ let calls=0;const module=createTranscriptionModule(env,adapter(async()=>{calls++;throw new Error('Must not resubmit');}));
+ await reconcileProviderBilling(env);
+ await module.recoverReceipt(transcriptId);await module.recoverReceipt(transcriptId);await module.run(id,1);
+ expect(calls).toBe(0);
+ expect((await module.status(id,id))?.transcript).toEqual(transcript);
+ expect((await module.status(id,id))?.state).toBe('ready');
+ expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(call).first()).toEqual({settled_units:3});
+ expect(await db.prepare('SELECT settled_units FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({settled_units:3});
+});
+
+test('a keyless runner racing legacy submission and deletion cannot release unknown billing',async()=>{
+ const id='configuration-legacy-race',env=await setup(id),transcriptId='transcript-'+id;
+ await db.prepare("INSERT INTO processing_budget(id,operation,reserved_units) VALUES(?,'openai-diarization-v1',6000000)").bind(transcriptId).run();
+ const racingDB=new Proxy(db,{get(target,key){
+  if(key!=='prepare'){const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}
+  return (sql:string)=>{
+   const statement=target.prepare(sql);
+   if(!sql.startsWith("UPDATE transcriptions SET state='configuration'"))return statement;
+   return {bind:(...values:unknown[])=>{const bound=statement.bind(...values);return {run:async()=>{
+    await db.prepare("UPDATE transcriptions SET state='cancelled' WHERE id=?").bind(transcriptId).run();
+    await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(id).run();
+    return bound.run();
+   }};}};
+  };
+ }});
+ await createTranscriptionModule({...env,DB:racingDB,OPENAI_API_KEY:undefined}).run(id);
+ expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind(transcriptId).first()).toEqual({state:'reserved',settled_units:null});
+ // This reservation is synthetic race setup; no request was actually submitted.
+ await db.prepare('DELETE FROM processing_budget WHERE id=?').bind(transcriptId).run();
+});
+
+test.each([
+  [400,'The transcription provider rejected the prepared recording (HTTP 400). The original is retained; its format and duration need checking before retrying.'],
+  [429,'OpenAI quota or rate limit reached. Check the API project billing before retrying.'],
+])('known provider rejection %i keeps an actionable error without provider response content',async(status,message)=>{
+  const id='provider-rejection-'+status,env=await setup(id);
+  const module=createTranscriptionModule(env,adapter(async()=>Response.json({error:{message:'Untrusted provider content must not be exposed'}},{status})));
+  await module.run(id);
+  expect(await module.status(id,id)).toMatchObject({state:'failed',error:message});
+  expect(await db.prepare('SELECT state,settled_units FROM processing_budget WHERE id=?').bind('transcript-'+id).first()).toEqual({state:'settled',settled_units:0});
+});
+
 test('concurrent starts submit once; immutable transcript replays without another charge and is owner-scoped', async () => {
   let calls = 0; const env = await setup('transcript-success');
   const module = createTranscriptionModule(env, adapter(async () => { calls++; return Response.json(provider, { headers: { 'x-request-id': 'req-test' } }); }));
@@ -71,6 +123,10 @@ test('a completed provider receipt survives a failed billing settlement and is n
   expect(calls).toBe(1); expect((await module.status('transcript-overage','transcript-overage'))?.state).toBe('reconciliation');
   expect(await bucket.head('transcripts/transcript-overage/transcript-transcript-overage.provider.json')).not.toBeNull();
   expect(await db.prepare("SELECT state FROM processing_budget WHERE id='transcript-transcript-overage'").first()).toEqual({ state: 'reserved' });
+  await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id='transcript-overage'").run();
+  await module.cleanup();
+  expect(await bucket.head('transcripts/transcript-overage/transcript-transcript-overage.provider.json')).toBeNull();
+  expect(await db.prepare("SELECT state FROM processing_budget WHERE id='transcript-transcript-overage'").first()).toEqual({state:'reserved'});
 });
 
 test('database publication retries replay the saved provider receipt without another paid request',async()=>{
