@@ -41,6 +41,21 @@ account or review: Cloudflare rejected the invitation insert into preview D1
 with authentication error 10000. No deployed concurrency success is claimed;
 preview must be rerun when authorized D1 access is restored.
 
+On the next attempt, authenticated D1 access succeeded. The deployed test passed
+the four-request admission race, retry identity/count checks, and second-account
+isolation/capacity checks. It then failed because deleting an unfinished review
+exceeded the 30-second HTTP timeout. The final cleanup completed, but this failed
+run does not establish reservation release and readmission after deletion.
+
+Deletion called global grouping, coaching, and correction receipt sweeps. A local
+regression made an unrelated receipt deletion unavailable and reproduced failure
+of deleting an empty review. Deletion now limits those storage sweeps to the
+requested review. Scheduled sweeps retain their global scope and late-artifact
+cleanup; the regression checks that unrelated receipts survive the request and
+are subsequently removed by normal sweeps. This fixes the demonstrated global
+receipt dependency, not every possible source of deletion latency. A deployed
+rerun remains necessary.
+
 The complete local development-server browser suite then passed all 13 enabled
 tests in 2.5 minutes, including this admission check; 12 opt-in cases were skipped.
 The run used the documented invalid provider fixture key. It emitted Workers

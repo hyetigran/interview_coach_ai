@@ -151,9 +151,9 @@ export function createMediaModule(env: Environment) {
       db.prepare("UPDATE processing_jobs SET dispatch_state=CASE WHEN state='queued' OR (state='cancelled' AND dispatch_state='cancelled') THEN 'cancelled' ELSE 'cancel_pending' END,state='cancelled',result=NULL,error=NULL,finished_at=? WHERE review_id=? AND owner_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(Date.now(), review, owner, review, owner),
     ]);
     await db.prepare("UPDATE grouping_runs SET state='cancelled' WHERE review_id=? AND owner_id=?").bind(review,owner).run();
-    await createGroupingModule(env).cleanup();
-    await createCoachingModule(env).cleanup();
-    await createCorrectionModule(env).cleanup();
+    await createGroupingModule(env).cleanup(review);
+    await createCoachingModule(env).cleanup(review);
+    await createCorrectionModule(env).cleanup(review);
     await db.prepare("UPDATE speaker_confirmations SET state='cancelled',speakers='[]' WHERE review_id=? AND owner_id=?").bind(review,owner).run();
     await db.prepare("UPDATE transcriptions SET state='cancelled',result_key=NULL,error=NULL WHERE review_id=? AND owner_id=?").bind(review, owner).run();
     const rows = (await db.prepare("SELECT * FROM uploads WHERE review_id=? AND owner_id=? AND state='cleanup'").bind(review, owner).all<Row>()).results;
