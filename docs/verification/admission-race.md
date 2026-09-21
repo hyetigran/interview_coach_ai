@@ -56,6 +56,14 @@ are subsequently removed by normal sweeps. This fixes the demonstrated global
 receipt dependency, not every possible source of deletion latency. A deployed
 rerun remains necessary.
 
+That rerun passed after [PR #47](https://github.com/hyetigran/interview_coach_ai/pull/47)
+merged as `b46a60558fff08f0f652eaa0ba753314467f4527`. The staging build deployed
+preview version `c9ee34a7-0a6d-4d27-a113-7374601cb331`. The unchanged test passed
+in 42.3 seconds (43.1 seconds total), including deletion, access denial,
+freed-slot reuse, and cleanup of every created review. The earlier authentication
+failure and deletion timeout are historical observations, not current blockers
+for this reservation-only check. The broader limits below still apply.
+
 The complete local development-server browser suite then passed all 13 enabled
 tests in 2.5 minutes, including this admission check; 12 opt-in cases were skipped.
 The run used the documented invalid provider fixture key. It emitted Workers
