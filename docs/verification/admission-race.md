@@ -41,6 +41,14 @@ account or review: Cloudflare rejected the invitation insert into preview D1
 with authentication error 10000. No deployed concurrency success is claimed;
 preview must be rerun when authorized D1 access is restored.
 
+The complete local development-server browser suite then passed all 13 enabled
+tests in 2.5 minutes, including this admission check; 12 opt-in cases were skipped.
+The run used the documented invalid provider fixture key. It emitted Workers
+hung-request cancellation, aborted-response, and recovered-connection diagnostics
+during other journeys. Passing assertions do not establish that those runtime
+diagnostics are resolved. Both Standards and Spec reviews found no issues in this
+increment.
+
 This covers reservation admission through authenticated HTTP APIs. It does not
 verify completed-upload admission races, permanent allowance after deleting an
 admitted recording, account automatic-job claims, the final shared budget
