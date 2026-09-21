@@ -93,7 +93,9 @@ def score(manifest_path, lock_path, ratings_path):
             key = (row['case_id'], row[key_name])
             if key not in allowed or row['reviewer_id'] not in reviewers:
                 raise ValueError(f'Unknown frozen evidence or reviewer in {section}.')
-            identity = (*key, row['reviewer_id'], row.get('system'))
+            identity = (*key, row['reviewer_id'])
+            if section == 'coaching':
+                identity = (*identity, row.get('system'))
             if identity in seen:
                 raise ValueError(f'Duplicate judgment in {section}.')
             seen.add(identity)
@@ -118,9 +120,14 @@ def score(manifest_path, lock_path, ratings_path):
         disputed_groups += len({(r['correct_association'], r['omitted'], r['attribution_error'], r['transcription_error']) for r in votes}) > 1
     spurious = ratings.get('spurious_groups', [])
     case_ids = {case for case, _ in questions}
+    seen_spurious = set()
     for row in spurious:
         if row.get('case_id') not in case_ids or row.get('reviewer_id') not in reviewers or not row.get('group_id'):
             raise ValueError('Spurious groups require a known case/reviewer and an output group ID.')
+        identity = (row['case_id'], row['group_id'], row['reviewer_id'])
+        if identity in seen_spurious:
+            raise ValueError('Duplicate judgment in spurious_groups.')
+        seen_spurious.add(identity)
     result = {}
     for system in ('app', 'baseline'):
         supported = disputed = missing = critical = major = abstentions = 0

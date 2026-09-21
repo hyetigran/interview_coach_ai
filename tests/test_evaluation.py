@@ -8,6 +8,44 @@ from pathlib import Path
 CLI = Path(__file__).resolve().parents[1] / 'tools' / 'evaluate.py'
 
 class EvaluationTests(unittest.TestCase):
+    def test_duplicate_judgments_are_rejected_without_rejecting_other_reviewers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root/'recording.txt').write_text('Synthetic fixture')
+            (root/'context.json').write_text('{}')
+            (root/'reference.json').write_text(json.dumps({'labeler_id': 'author', 'independent_labeler': False, 'questions': [
+                {'id': 'q1', 'thread_id': 't1', 'substantive': True, 'answer_utterance_ids': []}
+            ]}))
+            (root/'manifest.json').write_text(json.dumps({'cases': [{'id': 'fixture', 'origin': 'synthetic', 'permission_reference': 'author-created fixture', 'split': 'held_out', 'recording_file': 'recording.txt', 'reference_file': 'reference.json', 'context_file': 'context.json'}]}))
+            def run(*args):
+                return subprocess.run([sys.executable, str(CLI), *map(str, args)], capture_output=True, text=True)
+            frozen = run('freeze', root/'manifest.json', root/'lock.json')
+            self.assertEqual(frozen.returncode, 0, frozen.stderr)
+            grouping = {'case_id': 'fixture', 'question_id': 'q1', 'reviewer_id': 'r1',
+                        'correct_association': True, 'omitted': False, 'attribution_error': False, 'transcription_error': False}
+            spurious = {'case_id': 'fixture', 'group_id': 'extra1', 'reviewer_id': 'r1'}
+            coaching = {'case_id': 'fixture', 'thread_id': 't1', 'reviewer_id': 'r1', 'system': 'app',
+                        'supported_action': True, 'abstained': False, 'critical_defects': [], 'major_defects': []}
+            ratings = {'reviewers': [{'id': reviewer, 'independent': True} for reviewer in ('r1', 'r2')],
+                       'grouping': [grouping, dict(grouping, reviewer_id='r2')],
+                       'spurious_groups': [spurious, dict(spurious, reviewer_id='r2')],
+                       'coaching': [coaching, dict(coaching, system='baseline')]}
+            (root/'ratings.json').write_text(json.dumps(ratings))
+            valid = run('score', root/'manifest.json', root/'lock.json', root/'ratings.json', root/'valid.json')
+            self.assertEqual(valid.returncode, 0, valid.stderr)
+            report = json.loads((root/'valid.json').read_text())
+            self.assertEqual(report['grouping']['spurious_groups'], 1)
+            for section, duplicate in [('grouping', dict(grouping, system='baseline')),
+                                       ('spurious_groups', spurious), ('coaching', coaching)]:
+                with self.subTest(section=section):
+                    invalid = dict(ratings, **{section: [*ratings[section], duplicate]})
+                    (root/'ratings.json').write_text(json.dumps(invalid))
+                    output = root/f'{section}.json'
+                    result = run('score', root/'manifest.json', root/'lock.json', root/'ratings.json', output)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(f'Duplicate judgment in {section}', result.stderr)
+                    self.assertFalse(output.exists())
+
     def test_no_corpus_is_not_independent_validation(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
