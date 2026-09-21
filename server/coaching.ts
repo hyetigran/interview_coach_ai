@@ -136,12 +136,12 @@ export function createCoachingModule(env:Environment,request:typeof fetch=fetch)
   const jobs=(await db.prepare('SELECT * FROM coaching_jobs WHERE run_id=? ORDER BY rowid').bind(run.id).all<Job>()).results;
   return {state:run.state,error:run.state==='partial'&&jobs.length===0?(run.retry_attempts>=3?'Coaching reached its three-attempt limit before it could start. Your transcript and question groups remain available.':'Coaching could not start before its deadline. Use Reanalyze coaching in your context settings to retry with your saved transcript and question groups.'):null,jobs:jobs.map(job=>({id:job.id,threadId:job.thread_id,state:job.state,error:job.error,result:job.state==='ready'&&job.result?JSON.parse(job.result) as CoachingResult:null}))};
  }
- async function cleanup() {
+ async function cleanup(receiptReviewId?: string) {
   await db.prepare(`UPDATE coaching_runs SET state='outdated' WHERE state NOT IN ('cancelled','outdated') AND NOT ${active} AND EXISTS(SELECT 1 FROM reviews WHERE reviews.id=coaching_runs.review_id AND lifecycle='active')`).run();
   await db.prepare("UPDATE coaching_jobs SET state='outdated',draft=NULL WHERE run_id IN (SELECT id FROM coaching_runs WHERE state='outdated')").run();
   await db.prepare("UPDATE coaching_runs SET state='cancelled' WHERE state<>'cancelled' AND NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=coaching_runs.review_id AND lifecycle='active')").run();
   await db.prepare("UPDATE coaching_jobs SET state='cancelled',sources=NULL,draft=NULL,reuse_draft=NULL,result=NULL,error=NULL WHERE run_id IN (SELECT id FROM coaching_runs WHERE state='cancelled')").run();
-  const rows=(await db.prepare("SELECT coaching_jobs.id,coaching_runs.review_id FROM coaching_jobs JOIN coaching_runs ON coaching_runs.id=coaching_jobs.run_id WHERE coaching_runs.state='cancelled'").all<{id:string;review_id:string}>()).results;
+  const rows=(await db.prepare("SELECT coaching_jobs.id,coaching_runs.review_id FROM coaching_jobs JOIN coaching_runs ON coaching_runs.id=coaching_jobs.run_id WHERE coaching_runs.state='cancelled' AND (? IS NULL OR coaching_runs.review_id=?)").bind(receiptReviewId??null,receiptReviewId??null).all<{id:string;review_id:string}>()).results;
   for(const row of rows)await env.MEDIA.delete([0,1,2].flatMap(attempt=>(['draft','verify'] as const).map(stage=>`coaching/${row.review_id}/${coachingAttemptId(row.id,attempt,stage)}.provider.json`)));
   await db.prepare("UPDATE coaching_jobs SET state=CASE WHEN state='preparing' THEN 'failed' ELSE 'unknown' END,draft=NULL,error='Coaching was interrupted. Billing needs reconciliation.' WHERE state IN ('preparing','generating','verifying') AND started_at<?").bind(Date.now()-300000).run();
   await db.prepare("UPDATE coaching_jobs SET state='failed',error='This thread could not start before the deadline.' WHERE state='queued' AND run_id IN (SELECT id FROM coaching_runs WHERE state='running' AND deadline<=?)").bind(Date.now()).run();

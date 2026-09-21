@@ -3,6 +3,8 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createReviewModule } from '../server/reviews';
 import { createMediaModule } from '../server/media';
+import { createGroupingModule } from '../server/grouping';
+import { createCoachingModule } from '../server/coaching';
 import { PART_BYTES } from '../lib/media/contracts';
 const runtime = new Miniflare(convertV4MiniflareOptions({ modules: true, script: 'export default { fetch() { return new Response("test"); } }', d1Databases: ['DB'], r2Buckets: ['MEDIA'] }));
 let media: ReturnType<typeof createMediaModule>;
@@ -19,6 +21,44 @@ beforeAll(async () => {
   reviews = createReviewModule(db);
 });
 afterAll(() => runtime.dispose());
+test('deletion does not wait for unrelated receipt cleanup', async () => {
+  const owner = 'scoped-delete-owner';
+  const current = await review(owner);
+  const unrelated = await review('unrelated-delete-owner');
+  const bucket = await runtime.getR2Bucket('MEDIA') as unknown as R2Bucket;
+  await db.prepare("UPDATE reviews SET lifecycle='deleting' WHERE id=?").bind(unrelated.id).run();
+  await db.prepare("INSERT INTO grouping_runs(id,review_id,owner_id,transcript_id,revision,state,total,deadline) VALUES('unrelated-group-run',?,'unrelated-delete-owner','fixture',1,'cancelled',1,0)").bind(unrelated.id).run();
+  await db.prepare("INSERT INTO grouping_chunks(id,run_id,ordinal,state) VALUES('unrelated-group','unrelated-group-run',0,'cancelled')").run();
+  await db.prepare("INSERT INTO coaching_runs(id,review_id,owner_id,revision,state,deadline,model,prompt_version,rubric_version,schema_version,verification_version) VALUES('unrelated-coach-run',?,'unrelated-delete-owner',1,'cancelled',0,'fixture','fixture','fixture','fixture','fixture')").bind(unrelated.id).run();
+  await db.prepare("INSERT INTO coaching_jobs(id,run_id,thread_id,state) VALUES('unrelated-coach','unrelated-coach-run','fixture','cancelled')").run();
+  const correctionKey = `corrections/${unrelated.id}/fixture.json`;
+  await db.prepare("INSERT INTO transcript_correction_intents(id,review_id,owner_id,parent_id,revision,result_key,state,created_at) VALUES('unrelated-correction',?,'unrelated-delete-owner','fixture',2,?,'discarded',0)").bind(unrelated.id, correctionKey).run();
+  const retained = [`grouping/${unrelated.id}/unrelated-group.provider.json`, `coaching/${unrelated.id}/unrelated-coach-draft.provider.json`, correctionKey];
+  for (const key of retained) await bucket.put(key, '{}');
+  const attempted: string[] = [];
+  const isolated = new Proxy(bucket, {get(target, prop) {
+    if (prop === 'delete') return async (keys: string | string[]) => {
+      const values = Array.isArray(keys) ? keys : [keys];
+      attempted.push(...values);
+      if (values.some(key => key.includes(unrelated.id))) throw new Error('Unrelated storage operation unavailable');
+      return target.delete(keys);
+    };
+    const value = Reflect.get(target, prop); return typeof value === 'function' ? value.bind(target) : value;
+  }});
+  const cleaner = createMediaModule({DB: db, MEDIA: isolated, AUTH_SECRET: 'scoped-delete-test'});
+  try {
+    expect(await cleaner.remove(owner, current.id)).toEqual({cleanupPending: false});
+    await expect(cleaner.status(owner, current.id)).rejects.toMatchObject({status: 404});
+    expect(attempted.some(key => key.includes(unrelated.id))).toBe(false);
+    for (const key of retained) expect(await bucket.head(key)).not.toBeNull();
+  } finally {
+    // Normal scheduled sweeps still own all tombstones, including unrelated ones.
+    await createGroupingModule({DB: db, MEDIA: bucket}).cleanup();
+    await createCoachingModule({DB: db, MEDIA: bucket}).cleanup();
+    await media.cleanup();
+  }
+  for (const key of retained) expect(await bucket.head(key)).toBeNull();
+});
 function wav(size = PART_BYTES + 44) {
   const bytes = new Uint8Array(size); const view = new DataView(bytes.buffer);
   for (const [offset, value] of [[0, 'RIFF'], [8, 'WAVE'], [12, 'fmt '], [36, 'data']] as const) bytes.set(new TextEncoder().encode(value), offset);

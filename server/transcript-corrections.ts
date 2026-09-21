@@ -53,8 +53,8 @@ export function createCorrectionModule(env:Environment) {
   if(!results[1].meta.changes){await db.prepare("UPDATE transcript_correction_intents SET state='discarded',manual_groups=NULL,candidate_speakers=NULL,coverage=NULL WHERE id=? AND state='preparing'").bind(id).run();await env.MEDIA.delete(key);throw new CorrectionError(409,'The transcript changed while saving. Your draft is preserved.');}
   return {id,revision};
  }
- async function cleanup() {
-  const rows=(await db.prepare("SELECT id,result_key FROM transcript_correction_intents i WHERE NOT EXISTS(SELECT 1 FROM reviews r WHERE r.id=i.review_id AND r.lifecycle='active') OR (state<>'published' AND (state='discarded' OR created_at<?))").bind(Date.now()-900000).all<{id:string;result_key:string}>()).results;
+ async function cleanup(reviewId?: string) {
+  const rows=(await db.prepare("SELECT id,result_key FROM transcript_correction_intents i WHERE (? IS NULL OR i.review_id=?) AND (NOT EXISTS(SELECT 1 FROM reviews r WHERE r.id=i.review_id AND r.lifecycle='active') OR (state<>'published' AND (state='discarded' OR created_at<?)))").bind(reviewId??null,reviewId??null,Date.now()-900000).all<{id:string;result_key:string}>()).results;
   for(const row of rows){const claimed=await db.prepare("UPDATE transcript_correction_intents SET state='discarded',manual_groups=NULL,candidate_speakers=NULL,coverage=NULL WHERE id=? AND (NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=transcript_correction_intents.review_id AND lifecycle='active') OR (state<>'published' AND (state='discarded' OR created_at<?))) RETURNING result_key").bind(row.id,Date.now()-900000).first<{result_key:string}>();if(claimed)await env.MEDIA.delete(claimed.result_key);}
  }
  async function refresh(owner:string,review:string,input:unknown) {

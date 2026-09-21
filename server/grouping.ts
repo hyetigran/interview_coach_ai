@@ -168,11 +168,11 @@ export function createGroupingModule(env:Environment, request:typeof fetch=fetch
   async function releaseUnsent(){
     await db.prepare("UPDATE processing_budget SET state='settled',settled_units=0 WHERE state='reserved' AND EXISTS(SELECT 1 FROM grouping_chunks WHERE processing_budget.id=CASE WHEN attempt=0 THEN grouping_chunks.id ELSE grouping_chunks.id||'-attempt-'||attempt END AND submitted=0 AND state IN ('failed','budget_blocked','configuration','ready','cancelled') AND NOT EXISTS(SELECT 1 FROM recovery_requests WHERE recovery_requests.id=grouping_chunks.recovery_action_id AND recovery_requests.state='pending'))").run();
   }
-  async function cleanup() {
+  async function cleanup(receiptReviewId?: string) {
     await db.prepare(`UPDATE grouping_runs SET state='outdated' WHERE state NOT IN ('cancelled','outdated') AND NOT ${active} AND EXISTS(SELECT 1 FROM reviews WHERE reviews.id=grouping_runs.review_id AND lifecycle='active')`).run();
     await db.prepare("UPDATE grouping_runs SET state='cancelled' WHERE state<>'cancelled' AND NOT EXISTS(SELECT 1 FROM reviews WHERE reviews.id=grouping_runs.review_id AND lifecycle='active')").run();
     await db.prepare("UPDATE grouping_chunks SET state='cancelled',result=NULL,reuse_result=NULL,reuse_input=NULL,input_payload=NULL,error=NULL WHERE run_id IN (SELECT id FROM grouping_runs WHERE state='cancelled')").run();
-    const cancelled=(await db.prepare("SELECT grouping_chunks.id,grouping_runs.review_id FROM grouping_chunks JOIN grouping_runs ON grouping_runs.id=grouping_chunks.run_id WHERE grouping_runs.state='cancelled'").all<{id:string;review_id:string}>()).results;
+    const cancelled=(await db.prepare("SELECT grouping_chunks.id,grouping_runs.review_id FROM grouping_chunks JOIN grouping_runs ON grouping_runs.id=grouping_chunks.run_id WHERE grouping_runs.state='cancelled' AND (? IS NULL OR grouping_runs.review_id=?)").bind(receiptReviewId??null,receiptReviewId??null).all<{id:string;review_id:string}>()).results;
     for(const row of cancelled) await env.MEDIA.delete([0,1,2].map(attempt=>`grouping/${row.review_id}/${groupingAttemptId(row.id,attempt)}.provider.json`));
     await db.prepare("UPDATE grouping_chunks SET state=CASE WHEN state='preparing' THEN 'failed' ELSE 'unknown' END,error='Grouping was interrupted. This section needs reconciliation.' WHERE state IN ('preparing','submitting') AND started_at<?").bind(Date.now()-180000).run();
     await db.prepare("UPDATE grouping_chunks SET state='failed',error='This section could not start before the grouping deadline.' WHERE state='queued' AND run_id IN (SELECT id FROM grouping_runs WHERE deadline<=?)").bind(Date.now()).run();
