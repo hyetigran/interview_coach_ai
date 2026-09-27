@@ -1,6 +1,6 @@
 # Independent quality evaluation
 
-Status: **prepared protocol and tooling; no evaluation recordings are ready; reference annotations have not been supplied and independent reviewer availability is unconfirmed**. The user clarified on 2026-09-17 that no recordings are ready. No corpus has been inspected or frozen, and no measured results are available. This work supports ticket #14. Author fixtures demonstrate the evaluation tool, not transcription accuracy, useful coaching, or product demand.
+Status: **one user-supplied development recording registered on 2026-09-27; independent reference annotations and reviewer availability remain outstanding**. See [the sample and verification record](../verification/mock-interview-sample.md). This supersedes the 2026-09-17 statement that no recordings are available. The sample is not a frozen held-out corpus, and no measured independent quality results are available. This work supports ticket #14. Author fixtures and automatic captions do not establish transcription accuracy, useful coaching, or product demand.
 
 ## Evidence needed before completion
 
@@ -9,7 +9,7 @@ Status: **prepared protocol and tooling; no evaluation recordings are ready; ref
 - Independent coaching reviewers who did not author the outputs or tune on held-out cases.
 - A frozen held-out set before tuning, actual application/baseline outputs, blinded reviews, and a report of all failures and limitations.
 
-No recordings or reviewers have been recruited by this change. Do not close the evaluation as independently completed until these inputs exist. Recruitment/contact requires authorization; do not invent participants or send private material to an additional processor without permission.
+One public mock interview was supplied by the user; no independent reviewers have been recruited. Do not close the evaluation as independently completed until these inputs exist. Recruitment/contact requires authorization; do not invent participants or send private material to an additional processor without permission.
 
 ## Private corpus layout and freeze
 
