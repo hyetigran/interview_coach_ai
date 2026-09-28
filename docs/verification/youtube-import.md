@@ -9,6 +9,7 @@ The recording form accepts a YouTube video link and an optional stop time. The a
 - The same journey passed against the compiled local Worker. Its output also included network-loss, enqueue and canceled/hung-request diagnostics in OpenNext's response bridge; passing assertions do not establish those diagnostics are resolved. They are not evidence of a failed imported recording or a successful provider transcription.
 - Full app regression suite: 220 passed, three opt-in provider cases skipped. Final focused YouTube suite: six passed, including additional late-duplicate and failed-response completion regressions.
 - Media suite: 12 passed, including actual FFmpeg format/boundary checks and YouTube validation, size rejection and precise trimming.
+- The rebuilt Linux/amd64 media image imported the real video through 38:38 in 40.791 seconds at 0.25 CPU and 1 GiB RAM, with a read-only filesystem and 512 MiB temporary volume. It ran as non-root UID 1000 and returned exactly 74,176,044 bytes, inside the existing 75-second operation limit. This used local Docker networking, not Cloudflare egress.
 - Lint, typechecking and the OpenNext Worker build passed. Build output includes a dependency-generated duplicate-key warning in the auth bundle.
 
 ## Acceptance limits
