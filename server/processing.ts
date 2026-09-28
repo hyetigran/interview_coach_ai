@@ -65,8 +65,39 @@ export function createProcessingModule(env: Environment, dispatch?: (id: string,
     if (existing) return JSON.parse(existing.result);
     const job = await live(id,attempt);
     if (job.failure_kind === 'invalid') throw new InvalidRecording(job.error ?? 'This recording is invalid. Export it again and start a new review.');
-    const upload = await db.prepare("SELECT object_key,size,name FROM uploads WHERE id=? AND review_id=? AND state IN ('admitted','validating')").bind(job.upload_id, job.review_id).first<{ object_key: string; size: number; name: string }>();
+    const upload = await db.prepare("SELECT object_key,size,name,youtube_id,youtube_end_seconds FROM uploads WHERE id=? AND review_id=? AND state IN ('admitted','validating')").bind(job.upload_id, job.review_id).first<{ object_key: string; size: number; name: string; youtube_id: string | null; youtube_end_seconds: number | null }>();
     if (!upload) throw new Error('Recording is not available.');
+    if (upload.youtube_id) {
+      let imported = await bucket.head(upload.object_key);
+      if (!imported) {
+        const response = await mediaServiceRequest(env, `/operations/${preparationAttemptId(id,attempt)}`, {
+          method: 'POST', headers: {'content-type':'application/json','x-youtube-import':'1'},
+          body: JSON.stringify({videoId:upload.youtube_id,endSeconds:upload.youtube_end_seconds}), signal: AbortSignal.timeout(80000),
+        });
+        if (!response.ok || !response.body) {
+          // Drain the private service response so its completion receipt can be recorded.
+          await response.text();
+          throw new Error('YouTube import could not finish. The video may be unavailable or restricted. Retry, or upload a recording file.');
+        }
+        const length = Number(response.headers.get('content-length'));
+        if (!Number.isSafeInteger(length) || length < 46 || length > MAX_AUDIO_BYTES) { await response.body.cancel(); throw new InvalidRecording('Imported audio exceeds the recording limit.'); }
+        try { await live(id,attempt); } catch(error) { await response.body.cancel(); throw error; }
+        await bucket.put(upload.object_key, env.MEDIA_PROCESSOR ? mediaOutputForStorage(response) : response.body, {httpMetadata:{contentType:'audio/wav'}});
+        imported = await bucket.head(upload.object_key);
+      }
+      try {
+        await live(id,attempt);
+        if (!imported || imported.size > MAX_AUDIO_BYTES || imported.httpMetadata?.contentType !== 'audio/wav') throw new InvalidRecording('Imported recording is invalid.');
+        const saved = await db.prepare(`UPDATE uploads SET size=? WHERE id=? AND state='validating' AND expires_at>? AND EXISTS(SELECT 1 FROM processing_jobs WHERE id=? AND attempt=? AND state='running' AND ${active})`).bind(imported.size,job.upload_id,Date.now(),id,attempt).run();
+        if (!saved.meta.changes) throw new Error('YouTube import was cancelled or expired.');
+        upload.size = imported.size;
+      } catch(error) {
+        // A losing delivery must not delete the winner's source checkpoint.
+        const retained = await db.prepare("SELECT u.id FROM uploads u JOIN reviews r ON r.id=u.review_id WHERE u.id=? AND u.state IN ('validating','admitted') AND r.lifecycle='active'").bind(job.upload_id).first();
+        if (!retained) await bucket.delete(upload.object_key);
+        throw error;
+      }
+    }
     let audioKey = upload.object_key;
     const original = await bucket.get(upload.object_key);
     if (!original || original.size !== upload.size || original.size > MAX_AUDIO_BYTES) throw new InvalidRecording('Recording is incomplete or too large.');

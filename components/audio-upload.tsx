@@ -1,6 +1,7 @@
 'use client';
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { youtubeVideoId, youtubeEndSeconds } from '@/lib/media/youtube';
 import { api } from '@/lib/api';
 import { MAX_AUDIO_BYTES, PART_BYTES, type MediaState, type UploadState } from '@/lib/media/contracts';
 import { Button } from './ui/button';
@@ -10,6 +11,8 @@ import { PreparationStatus } from './preparation-status';
 
 export function AudioUpload({ reviewId, ownerId }: { reviewId: string; ownerId: string }) {
   const client = useQueryClient();
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [stopAt, setStopAt] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
   const abort = useRef<AbortController | null>(null);
@@ -48,6 +51,13 @@ export function AudioUpload({ reviewId, ownerId }: { reviewId: string; ownerId: 
     // Each new upload attempt independently reads the persisted session first.
     onSettled: () => { void client.invalidateQueries({ queryKey }); },
   });
+  const youtubeImport = useMutation({
+    mutationFn: async () => {
+      youtubeVideoId(youtubeUrl);
+      await api(path + '/youtube', {method:'POST',body:JSON.stringify({url:youtubeUrl,endSeconds:youtubeEndSeconds(stopAt),actionId:crypto.randomUUID()})});
+    },
+    onSettled: () => { void client.invalidateQueries({queryKey}); },
+  });
   const savedBytes = current?.parts.reduce((sum, part) => sum + Math.min(PART_BYTES, current.size - (part.number - 1) * PART_BYTES), 0) ?? 0;
   return <section className="my-8 rounded-xl border p-6" aria-labelledby="recording-heading">
     <h2 id="recording-heading" className="font-medium">Interview recording</h2>
@@ -59,8 +69,16 @@ export function AudioUpload({ reviewId, ownerId }: { reviewId: string; ownerId: 
       {current?.state === 'cleanup' && <p role="status" className="mt-4">The previous upload expired, was invalid, or was cancelled. Select a recording to start again; its unused reservation has been released.</p>}
       {current?.state === 'uploading' && <p className="mt-4">Saved {Math.round(savedBytes / current.size * 100)}% of {current.name}. Reselect the original file to resume. Upload expires {new Date(current.expiresAt).toLocaleString()}.</p>}
       {current?.state === 'completing' && <p role="status" className="mt-4">Checking your recording. If this was interrupted, reselect the file and retry after one minute.</p>}
-      <div className="mt-4 space-y-3"><Label htmlFor="audio-file">Interview recording file</Label><Input id="audio-file" type="file" accept=".wav,.mp4,.mov,.webm" disabled={upload.isPending || state.isPending} onChange={event => { setFile(event.target.files?.[0] ?? null); setProgress(0); upload.reset(); }} />
-        <Button disabled={!file || upload.isPending || state.isPending} onClick={() => upload.mutate()}>{upload.isPending ? 'Uploading…' : current && current.state !== 'cleanup' ? 'Resume upload' : 'Upload recording'}</Button>
+      {(!current || current.state === 'cleanup') && <form className="mt-5 space-y-3" onSubmit={event => { event.preventDefault(); youtubeImport.mutate(); }}>
+        <Label htmlFor="youtube-url">YouTube video link</Label>
+        <Input id="youtube-url" type="url" placeholder="https://www.youtube.com/watch?v=…" value={youtubeUrl} disabled={youtubeImport.isPending || upload.isPending} onChange={event => {setYoutubeUrl(event.target.value);youtubeImport.reset();}} />
+        <div className="max-w-xs space-y-2"><Label htmlFor="youtube-stop">Stop at (optional)</Label><Input id="youtube-stop" placeholder="38:38" value={stopAt} disabled={youtubeImport.isPending || upload.isPending} onChange={event => {setStopAt(event.target.value);youtubeImport.reset();}} aria-describedby="youtube-help" /></div>
+        <p id="youtube-help" className="text-sm text-muted-foreground">Import the audio from a public video up to 60 minutes. Use mm:ss to leave out feedback at the end. Processing continues if you close this page.</p>
+        <Button type="submit" disabled={!youtubeUrl.trim() || youtubeImport.isPending || upload.isPending || state.isPending}>{youtubeImport.isPending ? 'Starting import…' : 'Import from YouTube'}</Button>
+        {youtubeImport.error && <p role="alert">{youtubeImport.error.message}</p>}
+      </form>}
+      <div className="mt-6 border-t pt-4 space-y-3"><Label htmlFor="audio-file">Interview recording file</Label><Input id="audio-file" type="file" accept=".wav,.mp4,.mov,.webm" disabled={upload.isPending || youtubeImport.isPending || state.isPending} onChange={event => { setFile(event.target.files?.[0] ?? null); setProgress(0); upload.reset(); }} />
+        <Button disabled={!file || upload.isPending || youtubeImport.isPending || state.isPending} onClick={() => upload.mutate()}>{upload.isPending ? 'Uploading…' : current && current.state !== 'cleanup' ? 'Resume upload' : 'Upload recording'}</Button>
         {upload.isPending && <Button variant="outline" className="ml-3" onClick={() => abort.current?.abort()}>Pause upload</Button>}
         {upload.isPending && file && <p role="status">{Math.round(progress / file.size * 100)}% uploaded</p>}
         {upload.error && <p role="alert">{upload.error.name === 'AbortError' ? 'Upload paused. Reselect the original file after a reload to resume.' : upload.error.message}</p>}

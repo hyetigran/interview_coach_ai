@@ -1,3 +1,4 @@
+import { youtubeVideoId } from '../lib/media/youtube';
 import {cleanupTranscriptionArtifacts} from './transcription-part-lifecycle';
 import {createCorrectionModule} from './transcript-corrections';
 import { createCoachingModule } from './coaching';
@@ -7,7 +8,7 @@ import { validateWave } from './audio-format';
 import { z } from 'zod';
 import { MAX_AUDIO_BYTES, PART_BYTES, UPLOAD_LEASE_MS, type MediaState, type UploadState } from '../lib/media/contracts';
 export class MediaError extends Error { constructor(public status: number, message: string) { super(message); } }
-type Row = { id: string; owner_id: string; review_id: string; name: string; size: number; state: string; object_key: string; multipart_id: string | null; expires_at: number; admitted_at: number | null; lock_until: number };
+type Row = { id: string; owner_id: string; review_id: string; name: string; size: number; state: string; object_key: string; multipart_id: string | null; expires_at: number; admitted_at: number | null; lock_until: number; youtube_id: string | null; youtube_end_seconds: number | null };
 type Part = { number: number; etag: string; sha256: string };
 type Environment = { DB: D1Database; MEDIA: R2Bucket; AUTH_SECRET: string; RECORDING_ALLOWANCE?: string; LOCAL_MEDIA_ADAPTER?: string; PROCESSING?: Workflow<{ jobId: string }> };
 const inputSchema = z.object({ name: z.string().min(1).max(200).regex(/\.(wav|mp4|mov|webm)$/i), size: z.number().int().min(46).max(MAX_AUDIO_BYTES), actionId: z.uuid() }).strict();
@@ -39,7 +40,7 @@ export function createMediaModule(env: Environment) {
     // Keep tombstones and object keys: a late completion can write after an earlier cleanup.
     await Promise.all([row.multipart_id ? bucket.resumeMultipartUpload(row.object_key, row.multipart_id).abort() : Promise.resolve(), bucket.delete(row.object_key), cleanupAudio(row.id), bucket.delete([`transcripts/${row.review_id}/transcript-prepare-${row.id}.json`, `transcripts/${row.review_id}/transcript-prepare-${row.id}.provider.json`])]);
     await db.prepare('DELETE FROM upload_parts WHERE upload_id=?').bind(row.id).run();
-    await db.prepare("UPDATE uploads SET cleaned_at=?, name='' WHERE id=? AND state='cleanup'").bind(Date.now(), row.id).run();
+    await db.prepare("UPDATE uploads SET cleaned_at=?, name='', youtube_id=NULL, youtube_end_seconds=NULL WHERE id=? AND state='cleanup'").bind(Date.now(), row.id).run();
   }
   async function cleanup() {
     await createCorrectionModule(env).cleanup();
@@ -78,6 +79,28 @@ export function createMediaModule(env: Environment) {
     } catch (error) {
       await db.prepare("UPDATE uploads SET state='cleanup' WHERE id=? AND admitted_at IS NULL").bind(id).run(); await cleanup(); throw error;
     }
+  }
+  async function importYoutube(owner: string, review: string, input: unknown) {
+    const value = z.object({ url: z.string().max(2048), endSeconds: z.number().int().min(1).max(3600).optional(), actionId: z.uuid() }).strict().parse(input);
+    let videoId: string;
+    try { videoId = youtubeVideoId(value.url); } catch (error) { throw new MediaError(400, (error as Error).message); }
+    await authorize(owner, review); await expireReviewUploads(owner, review);
+    const id = crypto.randomUUID(), now = Date.now();
+    // Persist the admission and dispatch intent together, before any network import.
+    await db.batch([
+      db.prepare(`INSERT INTO uploads(id,owner_id,review_id,action_id,name,size,state,object_key,expires_at,created_at,youtube_id,youtube_end_seconds)
+        SELECT ?,?,?,?,?,0,'validating',?,?,?,?,? WHERE EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='active')
+        AND NOT EXISTS(SELECT 1 FROM uploads WHERE review_id=? AND state<>'cleanup')
+        AND (SELECT COUNT(*) FROM uploads WHERE owner_id=? AND (admitted_at IS NOT NULL OR (state<>'cleanup' AND expires_at>?)))<?`)
+        .bind(id,owner,review,value.actionId,`YouTube ${videoId}.wav`,'originals/'+id,now+UPLOAD_LEASE_MS,now,videoId,value.endSeconds??null,review,owner,review,owner,now,allowance),
+      initialJobStatement(db,id),
+    ]);
+    const row = await db.prepare("SELECT * FROM uploads WHERE review_id=? AND owner_id=? AND state<>'cleanup' ORDER BY created_at DESC LIMIT 1").bind(review,owner).first<Row>();
+    if (!row) throw new MediaError(409,'Recording allowance reached or review no longer available.');
+    if (row.youtube_id !== videoId || row.youtube_end_seconds !== (value.endSeconds??null)) throw new MediaError(409,'This review already has a different recording. Start a new review for this link.');
+    // Dispatch promptly; the scheduled reconciler repairs a lost dispatch response.
+    await createRuntimeProcessing(env).reconcile();
+    return view(row);
   }
   async function signPart(owner: string, review: string, id: string, number: number) {
     const row = await owned(owner, review, id);
@@ -147,7 +170,7 @@ export function createMediaModule(env: Environment) {
       db.prepare("DELETE FROM review_context_versions WHERE review_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review,review,owner),
       db.prepare("DELETE FROM saved_answers WHERE review_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review,review,owner),
       db.prepare("DELETE FROM review_priorities WHERE review_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review,review,owner),
-      db.prepare("UPDATE uploads SET state='cleanup',name='',cleaned_at=NULL WHERE review_id=? AND owner_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review, owner, review, owner),
+      db.prepare("UPDATE uploads SET state='cleanup',name='',youtube_id=NULL,youtube_end_seconds=NULL,cleaned_at=NULL WHERE review_id=? AND owner_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(review, owner, review, owner),
       db.prepare("UPDATE processing_jobs SET dispatch_state=CASE WHEN state='queued' OR (state='cancelled' AND dispatch_state='cancelled') THEN 'cancelled' ELSE 'cancel_pending' END,state='cancelled',result=NULL,error=NULL,finished_at=? WHERE review_id=? AND owner_id=? AND EXISTS(SELECT 1 FROM reviews WHERE id=? AND owner_id=? AND lifecycle='deleting')").bind(Date.now(), review, owner, review, owner),
     ]);
     await db.prepare("UPDATE grouping_runs SET state='cancelled' WHERE review_id=? AND owner_id=?").bind(review,owner).run();
@@ -192,5 +215,5 @@ export function createMediaModule(env: Environment) {
     await authorize(owner, review);
     return new Response(object.body, { status: range ? 206 : 200, headers });
   }
-  return { initiate, status, signPart, putPart, complete, remove, play, cleanup, deletionStatus };
+  return { initiate, importYoutube, status, signPart, putPart, complete, remove, play, cleanup, deletionStatus };
 }

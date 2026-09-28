@@ -43,6 +43,7 @@ export const reviews = sqliteTable('reviews', {
 
 export const uploads = sqliteTable('uploads', {
   id: text().primaryKey(), ownerId: text('owner_id').notNull(), reviewId: text('review_id').notNull(),
+  youtubeId: text('youtube_id'), youtubeEndSeconds: integer('youtube_end_seconds'),
   actionId: text('action_id').notNull(), name: text().notNull(), size: integer().notNull(),
   state: text().notNull().default('initializing'), objectKey: text('object_key').notNull().unique(),
   multipartId: text('multipart_id'), expiresAt: integer('expires_at').notNull(), createdAt: integer('created_at').notNull(),
