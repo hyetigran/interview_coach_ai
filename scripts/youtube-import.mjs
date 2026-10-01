@@ -5,11 +5,33 @@ import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
 const MAX_BYTES = 256 * 1024 * 1024;
+export class YoutubeImportError extends Error {
+  constructor(stage, category) {
+    super(`YouTube ${stage} failed (${category}).`);
+    this.stage = stage;
+    this.category = category;
+  }
+}
+export function youtubeFailureCategory(stderr) {
+  if (/sign in to confirm|not a bot|login required|cookies.*authentication/i.test(stderr)) return 'authentication';
+  if (/private video|video unavailable|video.*not available|removed|age.restricted/i.test(stderr)) return 'unavailable';
+  if (/requested format.*not available|no video formats/i.test(stderr)) return 'format';
+  if (/certificate verify|ssl.*certificate/i.test(stderr)) return 'tls';
+  if (/HTTP Error 403|Forbidden/i.test(stderr)) return 'forbidden';
+  if (/HTTP Error 429|Too Many Requests/i.test(stderr)) return 'rate_limit';
+  if (/timed out|timeout|Network is unreachable|Name or service not known|Temporary failure in name resolution|Connection refused/i.test(stderr)) return 'network';
+  if (/javascript|challenge|nsig/i.test(stderr)) return 'extractor';
+  return 'tool';
+}
 function run(command, args, signal) {
+  const stage = command === 'ffmpeg' ? 'conversion' : 'download';
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {signal,stdio:['ignore','ignore','ignore'],env:{PATH:process.env.PATH,LANG:'C.UTF-8'}});
-    child.on('error', reject);
-    child.on('close', code => code === 0 ? resolve() : reject(new Error('YouTube import failed. The video may be unavailable, restricted, too large, or longer than 60 minutes.')));
+    // Raw stderr stays in memory: URLs, titles and provider tokens must not enter logs.
+    let stderr = '';
+    const child = spawn(command, args, {signal,stdio:['ignore','ignore','pipe'],env:{PATH:process.env.PATH,LANG:'C.UTF-8'}});
+    child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-16384); });
+    child.on('error', error => reject(new YoutubeImportError(stage, signal.aborted ? 'cancelled' : error.code === 'ENOENT' ? 'missing_tool' : 'process')));
+    child.on('close', code => code === 0 ? resolve() : reject(new YoutubeImportError(stage, signal.aborted ? 'cancelled' : youtubeFailureCategory(stderr))));
   });
 }
 
