@@ -58,7 +58,7 @@ export function createApplication(env: CloudflareEnv) {
           }
           return json({ error: 'Method not allowed.' }, 405);
         }
-        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(media|audio|deletion|processing|transcript|recovery|speakers|threads|coaching|context|preparation|attribution|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
+        const mediaPath = /^\/api\/reviews\/([a-f0-9-]{36})\/(youtube|media|audio|deletion|processing|transcript|recovery|speakers|threads|coaching|context|preparation|attribution|uploads\/([a-f0-9-]{36})\/(complete|parts\/(\d+)(\/sign)?))$/.exec(path);
         if (mediaPath) {
           const [, reviewId, action, uploadId, operation, part, sign] = mediaPath;
           if(action==='recovery'&&request.method==='POST')return json(await createTranscriptionRetry(env).retry(session.user.id,reviewId,JSON.parse(new TextDecoder().decode(await boundedBytes(request,4096)))),202);
@@ -111,6 +111,7 @@ export function createApplication(env: CloudflareEnv) {
           }
           if (action === 'deletion' && request.method === 'GET') return json(await media.deletionStatus(session.user.id, reviewId));
           if (action === 'audio' && ['GET', 'HEAD'].includes(request.method)) return await media.play(session.user.id, reviewId, request.headers.get('range'), request.method === 'HEAD');
+          if (action === 'youtube' && request.method === 'POST') return json(await media.importYoutube(session.user.id, reviewId, JSON.parse(new TextDecoder().decode(await boundedBytes(request,4096)))),202);
           if (action === 'media' && request.method === 'GET') return json(await media.status(session.user.id, reviewId));
           if (action === 'media' && request.method === 'POST') return json(await media.initiate(session.user.id, reviewId, JSON.parse(new TextDecoder().decode(await boundedBytes(request, 4096)))));
           if (operation === 'complete' && request.method === 'POST') return json(await media.complete(session.user.id, reviewId, uploadId));

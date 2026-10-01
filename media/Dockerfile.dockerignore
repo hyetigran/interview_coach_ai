@@ -1,6 +1,7 @@
 **
 !scripts/
 !scripts/media-adapter.mjs
+!scripts/youtube-import.mjs
 !media/
 !media/container-entry.mjs
 !media/Dockerfile

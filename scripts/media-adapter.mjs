@@ -1,3 +1,4 @@
+import { importYoutube } from './youtube-import.mjs';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -89,12 +90,14 @@ export function mediaServer(secret, temporaryRoot = tmpdir(), initialized = Prom
     try {
       directory = await mkdtemp(join(temporaryRoot, 'interviewcoach-media-'));
       let observed = 0;
-      const bounded = new Transform({ transform(chunk, _encoding, callback) { observed += chunk.length; callback(observed > MAX_BYTES ? new InvalidRecording('Recording exceeds 256 MiB.') : null, chunk); } });
+      const bounded = new Transform({ transform(chunk, _encoding, callback) { observed += chunk.length; callback(observed > (request.headers['x-youtube-import'] === '1' ? 4096 : MAX_BYTES) ? new InvalidRecording('Recording exceeds 256 MiB.') : null, chunk); } });
+      const youtube = request.url.startsWith('/operations/') && request.headers['x-youtube-import'] === '1';
       const source = join(directory, 'source');
       await pipeline(request, bounded, createWriteStream(source, { mode: 0o600 }), { signal: controller.signal });
       let result;
       const parts=request.url.startsWith('/compression/')&&request.headers['x-transcription-parts']==='1';
-      if(parts)result=await compressChunks(source,directory,controller.signal);
+      if(youtube) result=await importYoutube(JSON.parse(await readFile(source,'utf8')),directory,controller.signal);
+      else if(parts)result=await compressChunks(source,directory,controller.signal);
       else if (request.url.startsWith('/compression/')) {
         const target = join(directory, 'speech.mp3');
         await run('ffmpeg', ['-v', 'error', '-protocol_whitelist', 'file', '-format_whitelist', 'wav', '-i', source, '-map', '0:a:0', '-ac', '1', '-ar', '16000', '-b:a', '32k', '-t', '3600', '-y', target], controller.signal);
@@ -104,7 +107,7 @@ export function mediaServer(secret, temporaryRoot = tmpdir(), initialized = Prom
       response.writeHead(200, { 'Content-Type': parts ? 'application/vnd.interview-coach.transcription-parts' : request.url.startsWith('/compression/') ? 'audio/mpeg' : 'audio/wav', 'Content-Length': String(result.bytes), 'Cache-Control': 'no-store' });
       await pipeline(createReadStream(result.target), response, { signal: controller.signal });
     } catch (error) {
-      if (!response.headersSent && !response.destroyed) response.writeHead(error instanceof InvalidRecording && !controller.signal.aborted ? 422 : 503).end(controller.signal.aborted ? 'Media preparation timed out or was cancelled.' : error instanceof InvalidRecording ? error.message : 'The local media service could not finish. Check that ffmpeg and ffprobe are installed and retry.');
+      if (!response.headersSent && !response.destroyed) response.writeHead(error instanceof InvalidRecording && !controller.signal.aborted ? 422 : 503).end(controller.signal.aborted ? 'Media preparation timed out or was cancelled.' : error instanceof InvalidRecording ? error.message : request.headers['x-youtube-import'] === '1' ? 'YouTube import could not finish. The video may be unavailable, restricted, too large, or longer than 60 minutes. Retry or upload a file.' : 'The local media service could not finish. Check that ffmpeg and ffprobe are installed and retry.');
     } finally { clearTimeout(timer); operations.delete(id); if (directory) await rm(directory, { recursive: true, force: true }); }
   });
 }

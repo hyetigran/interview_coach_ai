@@ -73,6 +73,23 @@ GitHub checks run on feature PRs and pushes to both `staging` and `main`. Set th
 
 `pnpm build` produces the complete OpenNext Worker bundle, including `.open-next/.build/open-next.config.edge.mjs`. `pnpm build:next` runs only the underlying Next.js compiler and is not sufficient for Cloudflare deployment. OpenNext explicitly invokes `build:next` to avoid recursively invoking itself.
 
+## YouTube link intake
+
+In a review, paste a public YouTube video link and select **Import from YouTube**. Optionally enter a **Stop at** time (`mm:ss` or `hh:mm:ss`) to exclude feedback. For the supplied mock interview, use `https://www.youtube.com/watch?v=sa41eWwM7iI` and `38:38`. The server imports audio; no user download or file upload is needed. The accepted job persists before retrieval, so the page can be closed and reopened.
+
+The source video must be at most 60 minutes. Single-video watch, shortened, shorts, embed and live URLs are accepted; active livestreams, playlists without a video, private/login-required and unavailable videos fail without attempting to bypass access controls. Link query start times are ignored: imports begin at zero and preserve the original timeline. Only the optional stop time trims the source. Imported audio uses the existing private storage, admission/account/budget limits, transcription, speaker confirmation, playback and review deletion.
+
+Local setup additionally requires Python 3.10+ and `yt-dlp[default]==2026.8.19` (including its packaged JavaScript support), plus Node 22 and FFmpeg on PATH. Install into a dedicated virtual environment and set `YT_DLP_PATH` to its executable when starting `pnpm dev`; never put downloader configuration or cookies in the application. The container installs this version at image build time. Apply migration `0033_youtube_import.sql` and deploy the new media image, job Worker and app before enabling this in staging. No new cloud service is required.
+
+Run the opt-in local UI import check without an OpenAI key to verify real YouTube retrieval without paid transcription:
+
+```sh
+E2E_DEV=1 E2E_YOUTUBE_IMPORT=1 YT_DLP_PATH=/path/to/venv/bin/yt-dlp \
+pnpm exec playwright test e2e/youtube-import.spec.ts
+```
+
+This test imports the supplied interview through 38:38, leaves/returns, verifies persisted audio and duplicate admission reuse, and deletes the review. In preview, the existing configured transcription pipeline can incur normal provider costs. YouTube availability and network restrictions can differ between local and hosted environments; a successful local import is not evidence of hosted reachability.
+
 ## Local recording uploads
 
 Run `pnpm setup:local`, `pnpm db:migrate:local`, and `pnpm dev`. The MEDIA binding uses local R2; no cloud credentials or paid transcription are needed. The first supported format is standard-header PCM 16-bit WAV (mono/stereo, 8–48 kHz), up to 256 MiB and 60 minutes. Uploads use 5 MiB binary parts with a 24-hour reservation and five-minute part capabilities. Reselect the original file after interruption; saved part hashes prevent mixing recordings.

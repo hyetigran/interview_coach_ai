@@ -16,6 +16,7 @@ export class MediaProcessor extends Container<{DB: D1Database}> {
       return new Response(null, {status:204});
     }
     if (request.method !== 'POST') return new Response('Method not allowed', {status:405});
+    const youtube = path.startsWith('/operations/') && request.headers.get('x-youtube-import') === '1';
     const secret = crypto.randomUUID() + crypto.randomUUID();
     const admitted = await this.ctx.blockConcurrencyWhile(async () => {
       if (await this.ctx.storage.get('consumed')) return 409;
@@ -23,13 +24,14 @@ export class MediaProcessor extends Container<{DB: D1Database}> {
       if (!await reserveMediaAttempt(this.env.DB, path)) return 402;
       await this.ctx.storage.put('consumed', true);
       await this.schedule(120, 'expire');
-      await this.startAndWaitForPorts({ports:8790, startOptions:{envVars:{AUTH_SECRET:secret},enableInternet:false}, cancellationOptions:{instanceGetTimeoutMS:10000,portReadyTimeoutMS:10000}});
+      await this.startAndWaitForPorts({ports:8790, startOptions:{envVars:{AUTH_SECRET:secret},enableInternet:youtube}, cancellationOptions:{instanceGetTimeoutMS:10000,portReadyTimeoutMS:10000}});
       return 200;
     });
     if (admitted !== 200) return new Response(admitted === 402 ? 'Media processing is no longer eligible, has unresolved billing, or exceeds the allowance.' : 'This media attempt was already submitted. Retry after cancellation completes.', {status:admitted});
     try {
       // Avoid containerFetch's automatic restart after an uncertain/terminated execution.
       const headers:Record<string,string>={authorization:`Bearer ${secret}`};
+      if(youtube) {headers['x-youtube-import']='1';headers['content-type']='application/json';}
       if(path.startsWith('/compression/')&&request.headers.get('x-transcription-parts')==='1')headers['x-transcription-parts']='1';
       const init: RequestInit & {duplex:'half'} = {method:'POST',headers,body:request.body,signal:request.signal,duplex:'half'};
       const response = await this.ctx.container!.getTcpPort(8790).fetch(new Request(`http://localhost:8790${path}`, init));

@@ -16,8 +16,8 @@ export function createPreparationRetry(env:Environment,processing=createRuntimeP
   }
   // Confirm termination of the previous Workflow before replacing its attempt.
   await processing.reconcile();
-  const source=await db.prepare("SELECT u.object_key FROM processing_jobs p JOIN uploads u ON u.id=p.upload_id WHERE p.id=? AND p.owner_id=? AND p.review_id=? AND p.revision=? AND (u.state='admitted' OR (u.state='validating' AND u.expires_at>?))").bind(value.jobId,owner,review,current.input_revision,Date.now()).first<{object_key:string}>();
-  if(!source||!await env.MEDIA.head(source.object_key))throw new RecoveryError(409,'The recording is unavailable or expired. Start a new review with the recording.');
+  const source=await db.prepare("SELECT u.object_key,u.youtube_id FROM processing_jobs p JOIN uploads u ON u.id=p.upload_id WHERE p.id=? AND p.owner_id=? AND p.review_id=? AND p.revision=? AND (u.state='admitted' OR (u.state='validating' AND u.expires_at>?))").bind(value.jobId,owner,review,current.input_revision,Date.now()).first<{object_key:string;youtube_id:string|null}>();
+  if(!source||(!source.youtube_id&&!await env.MEDIA.head(source.object_key)))throw new RecoveryError(409,'The recording is unavailable or expired. Start a new review with the recording.');
   const eligible=`SELECT p.id FROM processing_jobs p JOIN reviews r ON r.id=p.review_id JOIN uploads u ON u.id=p.upload_id
    WHERE p.id=? AND p.owner_id=? AND p.review_id=? AND p.attempt=? AND p.attempt<2
    AND p.state='failed' AND p.failure_kind='retryable' AND p.dispatch_state='cancelled'
