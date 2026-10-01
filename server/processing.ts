@@ -77,6 +77,9 @@ export function createProcessingModule(env: Environment, dispatch?: (id: string,
         if (!response.ok || !response.body) {
           // Drain the private service response so its completion receipt can be recorded.
           await response.text();
+          if (response.headers.get('x-media-error') === 'transport') throw new Error('The media service connection was interrupted. Your link is saved. Retry when the previous attempt has been reconciled.');
+          if (response.headers.get('x-youtube-error') === 'forbidden') throw new Error('YouTube refused this download (HTTP 403). Your link is saved, but this service cannot retrieve it right now.');
+          if (response.headers.get('x-youtube-error') === 'authentication') throw new Error('YouTube requires sign-in for this download. This service supports publicly accessible videos without sign-in.');
           throw new Error('YouTube import could not finish. The video may be unavailable or restricted. Retry, or upload a recording file.');
         }
         const length = Number(response.headers.get('content-length'));

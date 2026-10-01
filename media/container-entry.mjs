@@ -10,7 +10,8 @@ const server = mediaServer(secret, temporaryRoot);
 server.listen(8790, '0.0.0.0', () => console.log('Media service ready'));
 process.once('SIGTERM', () => {
   server.close();
-  server.closeAllConnections();
+  // Cloudflare rollouts allow active work to drain. Keep the absolute lifetime
+  // below as the hard bound; closing active sockets here loses paid results.
 });
 
 // Absolute lifetime survives a lost Worker request; process exit kills codec children.

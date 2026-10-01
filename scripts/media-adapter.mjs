@@ -1,4 +1,4 @@
-import { importYoutube } from './youtube-import.mjs';
+import { importYoutube, YoutubeImportError } from './youtube-import.mjs';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -96,7 +96,11 @@ export function mediaServer(secret, temporaryRoot = tmpdir(), initialized = Prom
       await pipeline(request, bounded, createWriteStream(source, { mode: 0o600 }), { signal: controller.signal });
       let result;
       const parts=request.url.startsWith('/compression/')&&request.headers['x-transcription-parts']==='1';
-      if(youtube) result=await importYoutube(JSON.parse(await readFile(source,'utf8')),directory,controller.signal);
+      if(youtube) {
+        console.log('youtube_import_started');
+        result=await importYoutube(JSON.parse(await readFile(source,'utf8')),directory,controller.signal);
+        console.log('youtube_import_completed');
+      }
       else if(parts)result=await compressChunks(source,directory,controller.signal);
       else if (request.url.startsWith('/compression/')) {
         const target = join(directory, 'speech.mp3');
@@ -107,6 +111,11 @@ export function mediaServer(secret, temporaryRoot = tmpdir(), initialized = Prom
       response.writeHead(200, { 'Content-Type': parts ? 'application/vnd.interview-coach.transcription-parts' : request.url.startsWith('/compression/') ? 'audio/mpeg' : 'audio/wav', 'Content-Length': String(result.bytes), 'Cache-Control': 'no-store' });
       await pipeline(createReadStream(result.target), response, { signal: controller.signal });
     } catch (error) {
+      if (request.headers['x-youtube-import'] === '1') console.warn('youtube_adapter_failed', {stage:error instanceof YoutubeImportError ? error.stage : 'adapter',category:error instanceof YoutubeImportError ? error.category : controller.signal.aborted ? 'cancelled' : 'internal'});
+      if (!response.headersSent && error instanceof YoutubeImportError) {
+        response.setHeader('x-youtube-error', error.category);
+        response.setHeader('x-youtube-stage', error.stage);
+      }
       if (!response.headersSent && !response.destroyed) response.writeHead(error instanceof InvalidRecording && !controller.signal.aborted ? 422 : 503).end(controller.signal.aborted ? 'Media preparation timed out or was cancelled.' : error instanceof InvalidRecording ? error.message : request.headers['x-youtube-import'] === '1' ? 'YouTube import could not finish. The video may be unavailable, restricted, too large, or longer than 60 minutes. Retry or upload a file.' : 'The local media service could not finish. Check that ffmpeg and ffprobe are installed and retry.');
     } finally { clearTimeout(timer); operations.delete(id); if (directory) await rm(directory, { recursive: true, force: true }); }
   });

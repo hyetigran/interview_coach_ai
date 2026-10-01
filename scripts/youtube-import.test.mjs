@@ -30,3 +30,15 @@ test('rejects an oversized downloaded file before decoding',async()=>{
   await assert.rejects(importYoutube({videoId:'sa41eWwM7iI'},dir,AbortSignal.timeout(1000),async()=>{const file=await open(join(dir,'youtube.m4a'),'w');await file.truncate(256*1024*1024+1);await file.close();}),/exceeds/);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('diagnostics distinguish failure causes without returning raw provider details', async () => {
+ const {youtubeFailureCategory}=await import('./youtube-import.mjs');
+ for(const [message,category] of [
+  ['Sign in to confirm you’re not a bot. token=private','authentication'],
+  ['HTTP Error 403: Forbidden https://private.example/token','forbidden'],
+  ['Requested format is not available','format'],
+  ['certificate verify failed','tls'],
+  ['Network is unreachable','network'],
+  ['secret-bearing unexpected failure','tool'],
+ ]) assert.equal(youtubeFailureCategory(message),category);
+});

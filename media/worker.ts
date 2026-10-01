@@ -35,6 +35,7 @@ export class MediaProcessor extends Container<{DB: D1Database}> {
       if(path.startsWith('/compression/')&&request.headers.get('x-transcription-parts')==='1')headers['x-transcription-parts']='1';
       const init: RequestInit & {duplex:'half'} = {method:'POST',headers,body:request.body,signal:request.signal,duplex:'half'};
       const response = await this.ctx.container!.getTcpPort(8790).fetch(new Request(`http://localhost:8790${path}`, init));
+      if (youtube && !response.ok) console.warn('youtube_import_failed', {status:response.status,stage:response.headers.get('x-youtube-stage'),category:response.headers.get('x-youtube-error')});
       if (!response.body) { await this.destroy(); return response; }
       const reader = response.body.getReader();
       let cancelled = false;
@@ -51,8 +52,13 @@ export class MediaProcessor extends Container<{DB: D1Database}> {
         },
         async cancel(reason) { cancelled = true; try { await reader.cancel(reason); } finally { await stop(); } },
       }), {status:response.status,headers:response.headers});
-    } catch { await this.destroy(); return new Response('Media processing failed. Retry after cancellation completes.', {status:502}); }
+    } catch (error) {
+      console.warn('media_transport_failed', {category:error instanceof Error && error.message.includes('Network connection lost') ? 'connection_lost' : 'transport'});
+      await this.destroy(); return new Response('Media processing failed. Retry after cancellation completes.', {status:502,headers:{'x-media-error':'transport'}});
+    }
   }
+
+  override onStop(params: {exitCode: number; reason: string}) { console.info('media_container_stopped', params); }
 
   async expire() { await this.destroy(); }
 }

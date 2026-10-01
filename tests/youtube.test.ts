@@ -83,3 +83,20 @@ test('drains failed service responses so the container can record known completi
  try{await expect(processing.prepare('prepare-'+u.id)).rejects.toThrow(/YouTube import/);expect(drained).toBe(true);expect(await bucket.head('originals/'+u.id)).toBeNull();}
  finally{fetcher.mockRestore();}
 });
+
+test('reports a transport interruption without blaming video availability',async()=>{
+ const owner='link-transport',r=await review(owner),u=await createMediaModule(env()).importYoutube(owner,r.id,input());
+ const processing=createProcessingModule(env(),async()=>{});await processing.reconcile();
+ const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('Interrupted',{status:502,headers:{'x-media-error':'transport'}}));
+ try{await expect(processing.prepare('prepare-'+u.id)).rejects.toThrow('The media service connection was interrupted. Your link is saved.');expect(await bucket.head('originals/'+u.id)).toBeNull();}
+ finally{fetcher.mockRestore();}
+});
+
+
+test('preserves a saved link and reports an upstream refusal distinctly',async()=>{
+ const owner='link-forbidden',r=await review(owner),media=createMediaModule(env()),u=await media.importYoutube(owner,r.id,input());
+ const processing=createProcessingModule(env(),async()=>{});await processing.reconcile();
+ const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('Refused',{status:503,headers:{'x-youtube-error':'forbidden'}}));
+ try{await expect(processing.prepare('prepare-'+u.id)).rejects.toThrow('YouTube refused this download (HTTP 403).');expect((await media.status(owner,r.id)).upload?.id).toBe(u.id);}
+ finally{fetcher.mockRestore();}
+});
