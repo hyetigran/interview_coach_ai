@@ -43,6 +43,8 @@ export async function importYoutube(input, directory, signal, execute = run) {
   await execute(process.env.YT_DLP_PATH || 'yt-dlp', [
     '--ignore-config','--no-plugin-dirs','--no-cache-dir','--no-playlist','--no-progress','--no-warnings',
     '--no-js-runtimes','--js-runtimes',`node:${process.execPath}`,
+    // Match Debate Coach's public embedded-video path; EJS is bundled in the image.
+    '--extractor-args','youtube:player_client=web_embedded',
     '--use-extractors','youtube','--socket-timeout','15','--retries','0','--fragment-retries','0',
     '--match-filters','!is_live & duration > 0 & duration <= 3600',
     '--max-filesize',String(MAX_BYTES),'-f','bestaudio[ext=m4a][protocol=https]',
