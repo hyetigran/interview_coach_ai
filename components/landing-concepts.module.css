@@ -1,0 +1,206 @@
+.studies {
+  min-height: 100svh;
+  color: var(--foreground);
+  background: var(--background);
+}
+
+.studyBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px clamp(20px, 4vw, 64px);
+  border-bottom: 1px solid var(--border);
+}
+
+.studyLabel { font-size: 13px; font-weight: 500; }
+.studyLabel > span { margin-inline-start: 12px; color: var(--muted-foreground); font-weight: 400; }
+.conceptNav { display: flex; gap: 4px; }
+.conceptLink {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  transition: color 150ms, background-color 150ms;
+}
+.conceptLink > span { font-family: ui-monospace, monospace; font-size: 11px; opacity: .6; }
+.conceptLink:hover { background: var(--muted); }
+.conceptLink[aria-current='page'] { background: var(--foreground); color: var(--background); }
+.main { outline: none; }
+.eyebrow { font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.6; letter-spacing: .09em; text-transform: uppercase; }
+.cta { height: auto; min-height: 56px; padding: 16px 26px; gap: 20px; font-size: 15px; white-space: normal; }
+.subtitle { max-width: 360px; font-size: 17px; line-height: 1.6; color: var(--muted-foreground); }
+
+/* 01: a centered title over a wide replay workspace. */
+.replay { max-width: 1240px; margin-inline: auto; padding: 48px 48px 28px; }
+.replayHeading { text-align: center; }
+.replayHeading > .eyebrow { color: var(--muted-foreground); }
+.replayHeading h1 { margin: 18px 0 24px; font-size: clamp(48px, 6vw, 80px); line-height: .98; letter-spacing: -.065em; font-weight: 500; }
+.replayHeading h1 span { color: var(--primary); }
+.replayDesk { display: block; margin-top: 40px; padding: 0; gap: 0; border-radius: 14px; overflow: hidden; box-shadow: 0 12px 40px oklch(0 0 0 / .035); }
+.deskBar { display: flex; justify-content: space-between; gap: 16px; padding: 16px 22px; border-bottom: 1px solid var(--border); font-size: 11px; font-family: ui-monospace, monospace; color: var(--muted-foreground); }
+.deskBar > span:last-child { display: flex; gap: 14px; }
+.replayBody { display: grid; grid-template-columns: .92fr 1.08fr; }
+.recording { position: relative; min-height: 300px; overflow: hidden; background: var(--muted); border-inline-end: 1px solid var(--border); }
+.cameraCorner { position: absolute; inset: 22px; border: 1px solid color-mix(in oklab, var(--foreground) 15%, transparent); }
+.person { position: absolute; inset: 30px 18% 24px; }
+.personHead { position: absolute; top: 12px; inset-inline-start: calc(50% - 39px); width: 78px; height: 92px; border: 1px solid color-mix(in oklab, var(--foreground) 25%, transparent); border-radius: 46% 46% 43% 43%; background: var(--background); }
+.personBody { position: absolute; inset: 112px 0 -40px; border: 1px solid color-mix(in oklab, var(--foreground) 25%, transparent); border-radius: 45% 45% 0 0; background: color-mix(in oklab, var(--background) 45%, var(--muted)); }
+.laptop { position: absolute; inset: auto -12% 0; height: 94px; border: 1px solid color-mix(in oklab, var(--foreground) 25%, transparent); border-radius: 8px 8px 0 0; background: color-mix(in oklab, var(--muted) 88%, var(--foreground)); }
+.timecode { position: absolute; inset-inline-start: 30px; bottom: 28px; z-index: 1; font-size: 11px; font-family: ui-monospace, monospace; background: var(--background); padding: 5px 8px; }
+.recordingLabel { position: absolute; top: 28px; inset-inline-start: 30px; font-size: 10px; font-family: ui-monospace, monospace; color: var(--muted-foreground); }
+.replayNote { padding: 26px 30px; }
+.replayNote > .eyebrow { color: var(--primary); font-size: 10px; }
+.replayNote h2 { margin-top: 14px; max-width: 400px; font-size: 21px; line-height: 1.3; font-weight: 500; letter-spacing: -.03em; }
+.originalQuote { margin-top: 20px; max-width: 480px; font-size: 14px; line-height: 1.7; color: var(--muted-foreground); }
+.coachNote { display: flex; gap: 12px; margin-top: 20px; padding: 14px 16px; border-radius: var(--radius-lg); background: color-mix(in oklab, var(--primary) 6%, var(--background)); font-size: 13px; line-height: 1.6; }
+.coachNote svg { flex: 0 0 auto; margin-top: 2px; color: var(--primary); }
+.nextTake { margin-top: 10px; font-size: 12px; }
+.nextTake summary { display: flex; align-items: center; min-height: 44px; gap: 10px; cursor: pointer; color: var(--primary); }
+.nextTake summary::before { content: '+'; font-size: 17px; }
+.nextTake[open] summary::before { content: '−'; }
+.nextTake summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; border-radius: 4px; }
+.nextTake > p { padding-bottom: 8px; font-size: 13px; line-height: 1.7; }
+.momentStrip { padding: 16px 22px 10px; border-top: 1px solid var(--border); }
+.waveform { display: flex; align-items: center; gap: 5px; height: 36px; }
+.waveform span { flex: 1; min-width: 0; background: var(--border); }
+.waveform[data-moment='0'] span:nth-child(-n+18),
+.waveform[data-moment='1'] span:nth-child(n+20):nth-child(-n+38),
+.waveform[data-moment='2'] span:nth-child(n+44):nth-child(-n+60) { background: color-mix(in oklab, var(--primary) 45%, var(--border)); }
+.momentButtons { display: flex; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.momentButton { height: auto; min-height: 44px; padding: 10px 12px; gap: 8px; color: var(--muted-foreground); font-size: 11px; white-space: normal; }
+.momentButton[aria-pressed='true'] { background: var(--muted); color: var(--foreground); }
+.momentButton > span:nth-child(2) { font-family: ui-monospace, monospace; font-size: 10px; }
+.momentDot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--border); }
+.momentButton[aria-pressed='true'] .momentDot { background: var(--primary); }
+.replayFooter { display: flex; justify-content: center; gap: 28px; margin-top: 24px; font-size: 11px; color: var(--muted-foreground); }
+
+/* 02: an editorial spread with the answer as the visual. */
+.notes { display: grid; grid-template-columns: .95fr 1.05fr; align-items: center; gap: 60px; max-width: 1240px; min-height: calc(100svh - 73px); margin-inline: auto; padding: 76px 48px 28px; }
+.notesCopy > .eyebrow { color: var(--muted-foreground); }
+.notesCopy h1 { margin-top: 28px; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(48px, 6.1vw, 80px); line-height: 1.06; font-weight: 400; letter-spacing: -.065em; }
+.notesCopy h1 span { font-style: italic; color: var(--primary); }
+.notesCopy > .subtitle { margin-top: 26px; }
+.notesCopy > .cta { margin-top: 28px; }
+.editorialFootnote { display: flex; gap: 18px; margin-top: 60px; color: var(--muted-foreground); font-size: 12px; line-height: 1.8; }
+.editorialFootnote > span { font-family: Georgia, serif; font-size: 36px; line-height: 1; color: var(--primary); }
+.paperStack { position: relative; min-width: 0; padding: 12px; }
+.paperBehind { position: absolute; inset: 8px 0 -8px 10px; border: 1px solid var(--border); background: var(--muted); transform: rotate(2.5deg); }
+.paper { position: relative; border-radius: 2px; padding: 30px; box-shadow: 0 8px 28px oklch(0 0 0 / .025); overflow: visible; }
+.paperTabs { gap: 0; }
+.paperHeader { display: grid; gap: 14px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+.paperHeader > .eyebrow { color: var(--muted-foreground); font-size: 10px; }
+.takeTabs { min-height: 44px; }
+.takeTabs > button { min-height: 44px; padding-inline: 14px; font-size: 12px; }
+.paper h2 { margin-top: 24px; font-size: 14px; line-height: 1.5; font-weight: 500; }
+.paperContent { min-height: 302px; }
+.paperContent blockquote { margin-top: 24px; font-size: 25px; line-height: 1.6; letter-spacing: -.035em; }
+.quietSentence { color: var(--muted-foreground); text-decoration: line-through; text-decoration-color: var(--border); }
+.paperContent mark { background: color-mix(in oklab, var(--primary) 13%, var(--background)); color: inherit; text-decoration: underline; text-decoration-color: var(--primary); text-underline-offset: 7px; }
+.marginNote { display: flex; align-items: center; gap: 12px; margin-top: 28px; color: var(--primary); font-family: ui-monospace, monospace; font-size: 11px; }
+.marginNote svg { transform: rotate(-25deg); flex: 0 0 auto; }
+.paperFooter { display: flex; justify-content: space-between; gap: 20px; margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 10px; color: var(--muted-foreground); }
+.paperFooter > span:last-child { flex-shrink: 0; font-family: ui-monospace, monospace; }
+.notesBottom { grid-column: 1 / -1; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-top: 30px; font-size: 11px; color: var(--muted-foreground); }
+
+/* 03: a quiet preparation page with a tangible practice plan. */
+.nextRound { min-height: calc(100svh - 73px); padding: 28px clamp(24px, 5vw, 72px) 0; background: color-mix(in oklab, var(--primary) 3%, var(--muted)); }
+.roundTop { display: flex; align-items: center; gap: 22px; max-width: 1136px; margin-inline: auto; padding-bottom: 28px; font-family: ui-monospace, monospace; font-size: 10px; color: var(--muted-foreground); }
+.roundTop svg { color: var(--primary); }
+.roundHero { display: grid; grid-template-columns: 1.1fr .9fr; align-items: center; gap: 80px; max-width: 1136px; margin-inline: auto; padding: 36px 0 62px; }
+.roundCopy > .eyebrow { color: var(--muted-foreground); }
+.roundCopy h1 { margin-top: 24px; font-size: clamp(48px, 5.7vw, 74px); line-height: 1.02; letter-spacing: -.06em; font-weight: 500; }
+.roundCopy h1 span { color: var(--primary); }
+.roundCopy > .subtitle { margin-top: 26px; }
+.roundCopy > .cta { margin-top: 28px; }
+.planArea { position: relative; min-width: 0; }
+.planConnector { position: absolute; top: -35px; inset-inline-start: -45px; display: flex; align-items: center; justify-content: center; width: 82px; height: 82px; border: 1px dashed color-mix(in oklab, var(--foreground) 25%, transparent); border-radius: 50%; color: var(--muted-foreground); }
+.plan { position: relative; padding: 26px; border-radius: 14px; gap: 0; }
+.planHeader { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.planHeader > .eyebrow { color: var(--muted-foreground); font-size: 10px; }
+.planProgress { flex-shrink: 0; font-size: 11px; font-family: ui-monospace, monospace; color: var(--primary); }
+.plan h2 { margin-top: 14px; font-size: 23px; line-height: 1.3; font-weight: 500; letter-spacing: -.04em; }
+.practiceList { margin-top: 28px; }
+.practiceItem { position: relative; display: flex; gap: 16px; padding: 20px 0; border-top: 1px solid var(--border); cursor: pointer; }
+.practiceItem input { position: absolute; top: 20px; inset-inline-start: 0; width: 44px; height: 44px; opacity: 0; cursor: pointer; }
+.checkBox { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-top: 2px; flex: 0 0 auto; border: 1px solid var(--input); border-radius: 5px; color: transparent; }
+.practiceItem input:checked + .checkBox { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
+.practiceItem input:focus-visible + .checkBox { outline: 2px solid var(--primary); outline-offset: 4px; }
+.practiceTitle, .practiceDetail, .practiceTag { display: block; }
+.practiceTitle { font-size: 14px; line-height: 1.6; font-weight: 500; }
+.practiceDetail { margin-top: 4px; font-size: 12px; line-height: 1.6; color: var(--muted-foreground); }
+.practiceTag { margin-top: 10px; font-size: 10px; color: var(--muted-foreground); font-family: ui-monospace, monospace; }
+.planFooter { display: flex; justify-content: space-between; gap: 16px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted-foreground); }
+.roundSteps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 44px; max-width: 1136px; margin-inline: auto; padding: 30px 0 36px; border-top: 1px solid color-mix(in oklab, var(--foreground) 15%, transparent); }
+.roundSteps li { display: grid; grid-template-columns: auto 1fr; column-gap: 18px; row-gap: 6px; }
+.roundSteps li > span { grid-row: span 2; font-family: ui-monospace, monospace; font-size: 12px; color: var(--primary); padding-top: 4px; }
+.roundSteps h2 { font-size: 19px; font-weight: 500; letter-spacing: -.03em; }
+.roundSteps p { font-size: 12px; line-height: 1.6; color: var(--muted-foreground); }
+
+@media (max-width: 1000px) {
+  .replay { padding-inline: 28px; }
+  .notes { padding-inline: 32px; gap: 28px; }
+  .notesCopy h1 { font-size: 60px; }
+  .paper { padding: 24px; }
+  .paperContent blockquote { font-size: 22px; }
+  .roundHero { gap: 40px; }
+  .roundCopy h1 { font-size: 60px; }
+  .plan { padding: 22px; }
+  .planConnector { inset-inline-start: -28px; }
+}
+
+@media (max-width: 900px) {
+  .notes { grid-template-columns: 1fr; min-height: 0; gap: 40px; padding-top: 42px; }
+  .notesCopy h1 { font-size: clamp(50px, 8vw, 76px); }
+  .editorialFootnote { margin-top: 30px; }
+  .paperStack { max-width: 560px; width: 100%; justify-self: center; }
+  .roundHero { grid-template-columns: 1fr; gap: 64px; padding: 24px 0 36px; }
+  .planArea { max-width: 560px; width: 100%; justify-self: center; }
+  .planConnector { inset-inline-start: auto; inset-inline-end: 24px; top: -42px; }
+}
+
+@media (max-width: 760px) {
+  .studyBar { flex-wrap: wrap; gap: 12px; padding: 14px 20px; }
+  .studyLabel { width: 100%; }
+  .conceptNav { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); }
+  .conceptLink { padding-inline: 8px; font-size: 12px; gap: 6px; }
+  .replay { padding: 36px 20px 24px; }
+  .replayHeading h1 { font-size: clamp(44px, 9vw, 68px); }
+  .replayDesk { margin-top: 32px; }
+  .replayBody { grid-template-columns: 1fr; }
+  .recording { min-height: 240px; border-inline-end: none; border-bottom: 1px solid var(--border); }
+  .person { inset-inline: 28%; }
+  .replayNote { padding: 24px; }
+  .momentStrip { padding-inline: 14px; }
+  .momentButtons { justify-content: start; gap: 6px; flex-wrap: wrap; }
+  .momentButton { flex: 1; min-width: 140px; justify-content: start; }
+  .replayFooter { gap: 18px; flex-wrap: wrap; }
+  .notes { grid-template-columns: 1fr; padding: 42px 24px 24px; gap: 40px; min-height: 0; }
+  .notesCopy h1 { font-size: clamp(50px, 10vw, 76px); margin-top: 20px; }
+  .editorialFootnote { margin-top: 30px; }
+  .paperStack { max-width: 560px; width: 100%; justify-self: center; }
+  .paperContent { min-height: 240px; }
+  .notesBottom { padding-top: 8px; }
+  .roundTop { gap: 14px; padding-bottom: 16px; }
+  .roundHero { grid-template-columns: 1fr; gap: 64px; padding: 24px 0 36px; }
+  .roundCopy h1 { font-size: clamp(46px, 9vw, 70px); }
+  .planArea { max-width: 560px; width: 100%; justify-self: center; }
+  .planConnector { inset-inline-start: auto; inset-inline-end: 24px; top: -42px; }
+  .roundSteps { gap: 24px; grid-template-columns: 1fr; padding-top: 24px; }
+}
+
+@media (max-width: 380px) {
+  .conceptLink { flex-direction: column; gap: 2px; }
+  .eyebrow { font-size: 10px; }
+  .deskBar { padding-inline: 16px; font-size: 10px; }
+  .replayNote { padding-inline: 20px; }
+  .notesCopy h1 { font-size: 47px; }
+  .paper { padding: 20px; }
+  .paperContent blockquote { font-size: 20px; }
+  .paperFooter { flex-wrap: wrap; gap: 8px; }
+  .roundCopy h1 { font-size: 40px; }
+}
