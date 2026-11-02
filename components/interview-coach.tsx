@@ -1,31 +1,38 @@
 'use client';
 
-import { useState } from 'react';
-import { ArrowDownLeft, ArrowRight, ArrowUpRight, Bookmark, Check, ChevronRight, CornerDownRight, FileText, Info, ListChecks, Plus } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
+import confidencePortrait from '@/public/interview-confidence-laptop.png';
+import { ArrowLeft, ArrowRight, Bookmark, Check, FileText, ListChecks, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Toaster } from '@/components/ui/sonner';
 import { questions } from '@/lib/sample-interview';
-import { ExampleCarousel } from '@/components/example-carousel';
+import { AnswerReview } from '@/components/answer-review';
+import { InterviewReviewPreview } from '@/components/interview-review-preview';
+import { LandingConcepts, type LandingConcept } from '@/components/landing-concepts';
+import { ReplayLanding } from '@/components/replay-landing';
 import { cn } from '@/lib/utils';
 
 type Screen = 'landing' | 'workspace';
 type Section = 'review' | 'saved' | 'priorities';
-type Modal = 'import' | 'edit' | 'about' | null;
-const eyebrow = 'text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground';
+type Modal = 'import' | 'edit' | null;
+const questionOptions = questions.map((question, index) => ({
+  value: String(index),
+  label: `${index + 1}. ${question.short}`,
+}));
 
-export function InterviewCoach() {
+export function InterviewCoach({ landingConcept, landingVersion = 'replay' }: {
+  landingConcept?: LandingConcept;
+  landingVersion?: 'replay' | 'portrait';
+} = {}) {
   const [screen, setScreen] = useState<Screen>('landing');
   const [section, setSection] = useState<Section>('review');
   const [selected, setSelected] = useState(1);
@@ -34,103 +41,223 @@ export function InterviewCoach() {
   const [revisions, setRevisions] = useState(questions.map(q => q.revised));
   const [saved, setSaved] = useState<number[]>([]);
   const [draft, setDraft] = useState('');
-  const [priorities, setPriorities] = useState(['Make your own contribution specific.', 'Explain the reasoning behind your decision.', '']);
+  const [draftError, setDraftError] = useState('');
+  const [priorities, setPriorities] = useState([
+    'Make your own contribution specific.',
+    'Explain the reasoning behind your decision.',
+    '',
+  ]);
+  const mainRef = useRef<HTMLElement>(null);
+  const revisionRef = useRef<HTMLTextAreaElement>(null);
+  const moveFocus = useRef(false);
   const q = questions[selected];
 
-  function navigate(next: Screen) { setScreen(next); window.scrollTo({ top: 0 }); }
-  function openExample() { setSelected(1); setSection('review'); setDetailTab('answer'); navigate('workspace'); }
-  function saveAnswer() { setSaved(current => current.includes(selected) ? current : [...current, selected]); toast.success('Answer saved to your preparation collection.'); }
-  function selectQuestion(index: number) { setSelected(index); setDetailTab('answer'); }
-  function editAnswer() { setDraft(revisions[selected]); setModal('edit'); }
+  useEffect(() => {
+    if (moveFocus.current) {
+      mainRef.current?.focus({ preventScroll: true });
+      moveFocus.current = false;
+    }
+  }, [screen, section]);
+
+  function navigate(next: Screen) {
+    moveFocus.current = true;
+    setScreen(next);
+    window.scrollTo({ top: 0 });
+  }
+
+  function openSection(next: Section) {
+    moveFocus.current = true;
+    setSection(next);
+    window.scrollTo({ top: 0 });
+  }
+
+  function openReview(questionIndex: number) {
+    setSelected(questionIndex);
+    setSection('review');
+    setDetailTab('answer');
+    navigate('workspace');
+  }
+
+  function openExample() {
+    openReview(1);
+  }
+
+  function saveAnswer() {
+    setSaved(current => current.includes(selected) ? current : [...current, selected]);
+    toast.success('Answer saved.');
+  }
+
+  function selectQuestion(index: number) {
+    setSelected(index);
+    setDetailTab('answer');
+  }
+
+  function editAnswer() {
+    setDraft(revisions[selected]);
+    setDraftError('');
+    setModal('edit');
+  }
 
   return <>
-    <header className="flex min-h-14 items-center justify-between gap-3 border-b bg-background px-4 sm:px-8">
-      <span className="text-[10px] font-medium tracking-widest text-muted-foreground">DESIGN 02<span className="hidden sm:inline"> / INTERVIEW COACH</span></span>
-      <Tabs value={screen} onValueChange={value => navigate(value as Screen)}>
-        <TabsList aria-label="Preview screen"><TabsTrigger value="landing">Landing page</TabsTrigger><TabsTrigger value="workspace">Dashboard</TabsTrigger></TabsList>
-      </Tabs>
-      <span className="hidden text-[10px] tracking-widest text-muted-foreground lg:block">INTERACTIVE PROTOTYPE</span>
-    </header>
+    <a href="#main-content" className="fixed -top-20 start-4 z-50 inline-flex h-11 items-center rounded-lg bg-background px-4 text-sm focus:top-4">Skip to content</a>
 
-    {screen === 'landing' ? <main className="bg-muted/25">
-      <div className="mx-auto max-w-[1440px] px-6 md:px-14 lg:px-24">
-        <nav className="flex items-center justify-end gap-4 py-7 md:justify-between" aria-label="Main navigation">
-          <span className="hidden text-xs text-muted-foreground md:block">A little reflection. A clearer next answer.</span>
-          <div className="flex items-center gap-3 sm:gap-6"><Button variant="ghost" onClick={openExample}>See an example</Button><Button variant="outline" onClick={() => navigate('workspace')}>Open workspace<ArrowUpRight data-icon="inline-end" /></Button></div>
-        </nav>
-        <section className="grid items-center gap-12 py-12 md:py-20 lg:grid-cols-2 lg:gap-16 lg:py-24">
-          <div>
-            <p className={cn(eyebrow, 'flex items-center gap-2')}><span className="size-1.5 rounded-full bg-primary" />A closer look at your interview</p>
-            <h1 className="mt-6 max-w-xl text-[clamp(2.7rem,4.7vw,4.4rem)] leading-[1.07] font-medium tracking-[-0.055em]">Find the answer<br className="hidden sm:block" /> inside <span className="text-primary">your answer.</span></h1>
-            <p className="mt-6 max-w-sm text-sm leading-7 text-muted-foreground md:text-base">Look back at your interview. See what to clarify, what to keep, and how to tell your story next time.</p>
-            <Button size="lg" className="mt-8 h-14 gap-3 px-7 text-base has-data-[icon=inline-end]:pr-6" onClick={() => setModal('import')}>Review my interview<ArrowUpRight className="size-5" data-icon="inline-end" /></Button>
-            <p className="mt-4 text-xs text-muted-foreground">Start with a real or mock interview transcript.</p>
+    {screen === 'landing' && landingConcept ? (
+      <LandingConcepts concept={landingConcept} mainRef={mainRef} revisions={revisions} onOpenReview={openExample} />
+    ) : screen === 'landing' && landingVersion === 'replay' ? (
+      <ReplayLanding mainRef={mainRef} revisions={revisions} onOpenReview={openReview} />
+    ) : screen === 'landing' ? (
+      <main id="main-content" ref={mainRef} tabIndex={-1} aria-labelledby="page-title" className="bg-background outline-none">
+        <section className="relative isolate overflow-hidden">
+          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-[clamp(20rem,70vw,32rem)] min-[1200px]:inset-y-0 min-[1200px]:left-[38%] min-[1200px]:h-auto">
+            <Image
+              src={confidencePortrait}
+              alt=""
+              fill
+              sizes="(max-width: 400px) 150vw, 100vw"
+              loading="eager"
+              className="object-cover object-[42%_top] select-none min-[1200px]:object-[35%_center]"
+            />
+            <div className="absolute inset-0 bg-linear-to-t from-background from-20% via-background/0 via-60% to-transparent min-[1200px]:hidden" />
           </div>
-          <ExampleCarousel />
-        </section>
-        <Separator />
-        <section className="grid gap-8 py-9 md:grid-cols-3" aria-label="How it works">
-          {[
-            ['Bring the conversation', 'Paste a transcript from an interview you’ve already had.'],
-            ['Find what matters', 'Explore each answer, with suggestions you can trace to the source.'],
-            ['Take something forward', 'Save a revised answer and a few priorities for your next interview.'],
-          ].map(([title, description], i) => <div key={title} className="flex gap-4"><span className="pt-0.5 text-xs tabular-nums text-muted-foreground">0{i + 1}</span><div><h3 className="text-sm font-medium">{title}</h3><p className="mt-2 max-w-64 text-xs leading-6 text-muted-foreground">{description}</p></div></div>)}
-        </section>
-        <Separator />
-        <footer className="flex flex-wrap justify-between gap-4 py-6 text-[11px] text-muted-foreground"><span>Your experience. Your words. A clearer next step.</span><span>Designed for reflection, after the interview.</span></footer>
-      </div>
-    </main> : <main className="grid min-h-[calc(100svh-3.5rem)] lg:grid-cols-[220px_minmax(0,1fr)]">
-      <aside className="flex flex-wrap items-center gap-5 border-b bg-sidebar p-5 lg:flex-col lg:items-stretch lg:gap-8 lg:border-e lg:border-b-0 lg:py-8">
-        <div className="me-auto px-1"><h2 className="text-sm font-medium">Your workspace</h2><p className="mt-2 text-[11px] text-muted-foreground">A place to reflect and prepare</p></div>
-        <Button onClick={() => setModal('import')}><Plus data-icon="inline-start" />New review</Button>
-        <div className="hidden lg:block"><p className={cn(eyebrow, 'mb-4 px-2')}>Your interviews</p><div className="space-y-2">
-          {['Product designer · Acme', 'Design collaboration', 'Product designer · Northstar'].map((title, i) => <Button key={title} variant="ghost" className={cn('h-auto w-full justify-start px-3 py-3 text-start whitespace-normal', i === 0 && section === 'review' && 'bg-sidebar-accent')} onClick={() => i === 0 ? setSection('review') : toast.info('This prototype includes the Acme interview.')}><span className="text-xs">{title}<span className="mt-1.5 block text-[11px] font-normal text-muted-foreground">{['Sep 14 · 6 questions', 'Sep 10 · Mock interview', 'Sep 06 · Real interview'][i]}</span></span></Button>)}
-        </div></div>
-        <nav className="flex w-full flex-wrap gap-2 lg:flex-col" aria-label="Workspace navigation">
-          <Button variant="ghost" className="justify-start lg:hidden" onClick={() => setSection('review')}><FileText />Review</Button>
-          <Button variant="ghost" className={cn('justify-start', section === 'saved' && 'bg-sidebar-accent')} onClick={() => setSection('saved')}><Bookmark />Saved answers<Badge variant="outline" className="ms-auto">{saved.length}</Badge></Button>
-          <Button variant="ghost" className={cn('justify-start', section === 'priorities' && 'bg-sidebar-accent')} onClick={() => setSection('priorities')}><ListChecks />Preparation priorities</Button>
-        </nav>
-        <div className="mt-auto hidden items-center gap-3 px-2 pt-8 lg:flex"><Avatar><AvatarFallback>AL</AvatarFallback></Avatar><div className="text-xs">Alex<p className="mt-1 text-[11px] text-muted-foreground">Personal workspace</p></div></div>
-      </aside>
-      <section className="min-w-0">
-        <header className="flex flex-wrap items-center justify-between gap-2 border-b px-5 py-4 md:px-8"><div className="flex items-center gap-3 text-xs text-muted-foreground"><span>Your interviews</span><ChevronRight className="size-3" /><span className="text-foreground">{section === 'review' ? 'Acme' : section === 'saved' ? 'Saved answers' : 'Priorities'}</span></div><Button variant="ghost" size="sm" onClick={() => setModal('about')}>Sample workspace<Info /></Button></header>
-        <div className="mx-auto max-w-[1500px] px-5 py-8 md:px-8">
-          {section === 'review' ? <>
-            <div className="mb-9 flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-2xl font-medium tracking-tight md:text-3xl">Product designer · Acme</h1><p className="mt-3 text-xs leading-6 text-muted-foreground">Real interview <span className="px-2">·</span> September 14, 2026 <span className="px-2">·</span> 6 question threads</p></div><Badge variant="outline" className="gap-1.5"><span className="size-1.5 rounded-full bg-primary" />Ready to review</Badge></div>
-            <div className="grid gap-7 xl:grid-cols-[205px_minmax(0,1fr)]">
-              <aside className="min-w-0"><div className={cn(eyebrow, 'mb-4 flex justify-between px-2')}><span>Question flow</span><span>06</span></div>
-                <div className="flex gap-2 overflow-x-auto pb-3 xl:flex-col xl:overflow-visible">
-                  {questions.map((item, i) => <Button key={item.short} variant="ghost" aria-pressed={selected === i} className={cn('h-auto w-48 shrink-0 items-start justify-start gap-3 px-3 py-4 text-start whitespace-normal xl:w-full', selected === i && 'bg-primary/5 ring-1 ring-inset ring-primary/20')} onClick={() => selectQuestion(i)}><span className={cn('pt-0.5 text-[11px] font-normal tabular-nums text-muted-foreground', selected === i && 'text-primary')}>0{i + 1}</span><span className="text-xs leading-5">{item.short}<span className="mt-1.5 block text-[11px] font-normal text-muted-foreground">{item.category}{i === 1 ? ' · 1 follow-up' : ''}</span></span></Button>)}
-                </div>
-                <div className="mt-5 hidden px-2 xl:block"><Separator /><p className="mt-5 text-xs leading-6 text-muted-foreground">One conversation.<br />A few useful things to take forward.</p><Button variant="link" className="mt-2 px-0 text-xs" onClick={() => setSection('priorities')}>Preparation priorities<ArrowUpRight /></Button></div>
-              </aside>
-              <article className="min-w-0"><div className="flex items-center gap-2"><span className={eyebrow}>Question 0{selected + 1}</span><Badge variant="secondary">{q.category}</Badge></div><h2 className="mt-4 max-w-3xl text-2xl leading-snug font-medium tracking-tight md:text-[28px]">{q.title}</h2>
-                <Tabs value={detailTab} onValueChange={value => setDetailTab(String(value))} className="mt-6 gap-6">
-                  <div className="border-b pb-1"><TabsList variant="line" aria-label="Answer details"><TabsTrigger value="answer">Answer & suggestion</TabsTrigger><TabsTrigger value="source">Source transcript</TabsTrigger></TabsList></div>
-                  <TabsContent value="answer">
-                    <div className="grid gap-5 min-[1380px]:grid-cols-2">
-                      <Card className="bg-muted/35"><CardHeader><CardTitle className={cn(eyebrow, 'flex items-center justify-between')}>Your original answer<ArrowDownLeft className="size-3.5" /></CardTitle></CardHeader><CardContent><p className="text-sm leading-7 text-muted-foreground">“{q.original}”</p><p className="mt-6 text-[11px] text-muted-foreground">As recorded in your transcript</p></CardContent></Card>
-                      <Card className="bg-primary/5 ring-primary/15"><CardHeader><CardTitle className={cn(eyebrow, 'flex items-center justify-between text-primary')}>A proposed revision<ArrowUpRight className="size-3.5" /></CardTitle></CardHeader><CardContent><p className="text-sm leading-7">“{revisions[selected]}”</p><p className="mt-6 text-[11px] text-muted-foreground">A future answer, using your existing details</p></CardContent></Card>
-                    </div>
-                    <div className="flex gap-3 py-7"><CornerDownRight className="mt-0.5 size-4 shrink-0 text-primary" /><div><h3 className="text-sm font-medium">Why this suggestion</h3><p className="mt-2 max-w-3xl text-sm leading-7 text-muted-foreground">{q.why}</p></div></div>
-                    <Separator /><div className="flex flex-wrap items-center justify-between gap-3 py-5"><div className="flex gap-2"><Button onClick={saveAnswer}>{saved.includes(selected) ? <Check /> : <Bookmark />}{saved.includes(selected) ? 'Answer saved' : 'Save this answer'}</Button><Button variant="ghost" onClick={editAnswer}>Edit revision</Button></div><Button variant="ghost" onClick={() => setDetailTab('source')}>View source<ArrowUpRight /></Button></div>
-                    {selected === 1 && <Accordion><AccordionItem value="follow-up"><AccordionTrigger>1 follow-up in this conversation</AccordionTrigger><AccordionContent><p className="leading-7"><strong>Interviewer:</strong> What helped you reach an agreement?</p><p className="mt-2 leading-7"><strong>You:</strong> Seeing both options made it easier to talk about the differences.</p><p className="mt-3 text-muted-foreground">This supports the role of the prototype, but does not establish a business outcome.</p></AccordionContent></AccordionItem></Accordion>}
-                  </TabsContent>
-                  <TabsContent value="source"><Card><CardHeader><CardTitle className={eyebrow}>Acme · Original transcript · Sample data</CardTitle></CardHeader><CardContent className="space-y-5 text-sm leading-7"><p><strong>Interviewer:</strong> {q.title}</p><p><strong>You:</strong> {q.original}</p><p className="text-xs text-muted-foreground">Original wording is preserved. Revisions are saved separately.</p></CardContent></Card></TabsContent>
-                </Tabs>
-              </article>
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 hidden bg-linear-to-r from-background from-25% via-background via-38% to-transparent to-58% min-[1200px]:block" />
+          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-background to-transparent" />
+          <div className="relative mx-auto grid min-h-svh w-full max-w-[1280px] content-start items-start gap-7 px-6 py-8 pt-[clamp(16rem,40vw,20rem)] min-[600px]:px-12 min-[800px]:grid-cols-2 min-[800px]:gap-8 min-[1200px]:min-h-[max(100svh,45rem)] min-[1200px]:gap-16 min-[1200px]:px-16 min-[1200px]:pt-8 min-[1200px]:pb-6">
+            <div className="w-full max-w-md">
+              <h1 id="page-title" className="text-[clamp(2.5rem,4.5vw,3.5rem)] leading-[1.08] font-medium tracking-[-0.05em] text-balance"><span className="text-primary">Game tape</span> for your interviews.</h1>
+              <p className="mt-5 max-w-sm text-base leading-6 text-muted-foreground">Review your answers and find what to improve.</p>
+              <Button size="lg" className="mt-6 h-14 gap-4 px-7 text-base" onClick={openExample}>Open sample review<ArrowRight className="size-5" aria-hidden="true" /></Button>
             </div>
-          </> : section === 'saved' ? <section className="max-w-3xl"><h1 className="text-3xl font-medium tracking-tight">Saved answers</h1><p className="mt-3 text-sm text-muted-foreground">Revised drafts to return to before your next conversation.</p><div className="mt-8 space-y-5">{saved.length ? saved.map(i => <Card key={i}><CardHeader><CardTitle>{questions[i].title}</CardTitle></CardHeader><CardContent><p className="text-sm leading-7 text-muted-foreground">{revisions[i]}</p></CardContent><CardFooter><span className="text-xs text-muted-foreground">Acme · Proposed future answer</span></CardFooter></Card>) : <Card><CardHeader><CardTitle>Keep an answer worth returning to.</CardTitle></CardHeader><CardContent><p className="mb-5 text-sm leading-7 text-muted-foreground">Save a revision from your interview review. It will appear here for the rest of this preview session.</p><Button variant="outline" onClick={() => setSection('review')}>Return to review<ArrowRight /></Button></CardContent></Card>}</div></section> : <section className="max-w-2xl"><h1 className="text-3xl font-medium tracking-tight">For your next interview</h1><p className="mt-3 text-sm text-muted-foreground">Keep up to three specific things you want to remember.</p><form className="mt-8 space-y-6" onSubmit={event => {event.preventDefault(); toast.success('Preparation priorities saved for this session.');}}>{priorities.map((value, i) => <div key={i} className="space-y-2"><Label htmlFor={`priority-${i}`}>Priority {i + 1}{i === 2 && ' · Optional'}</Label><Input id={`priority-${i}`} value={value} onChange={event => setPriorities(current => current.map((p, index) => index === i ? event.target.value : p))} /></div>)}<Button type="submit">Save priorities</Button><p className="text-xs text-muted-foreground">Changes last for this preview session.</p></form></section>}
-        </div>
-      </section>
-    </main>}
+            <div className="ms-auto w-full max-w-[35rem] min-[800px]:max-w-none min-[1200px]:mt-[max(17rem,calc(43svh_-_2rem))]">
+              <InterviewReviewPreview revisions={revisions} />
+            </div>
+          </div>
+        </section>
+      </main>
+    ) : (
+      <div className="grid min-h-svh min-w-0 grid-rows-[auto_1fr] lg:grid-cols-[208px_minmax(0,1fr)] lg:grid-rows-1">
+        <aside className="flex flex-wrap items-center justify-between gap-3 border-b bg-sidebar px-4 py-3 lg:flex-col lg:items-stretch lg:justify-start lg:gap-8 lg:border-e lg:border-b-0 lg:p-5 lg:py-6">
+          <Button variant="ghost" className="h-11 justify-start px-3 lg:self-start" onClick={() => navigate('landing')}><ArrowLeft aria-hidden="true" />Home</Button>
+          <nav className="order-3 flex w-full gap-1 lg:order-none lg:flex-col lg:gap-2" aria-label="Workspace navigation">
+            {([
+              ['review', 'Review', FileText],
+              ['saved', 'Saved answers', Bookmark],
+              ['priorities', 'Priorities', ListChecks],
+            ] as const).map(([value, label, Icon]) => (
+              <Button key={value} variant="ghost" aria-label={value === 'saved' && saved.length > 0 ? `Saved answers ${saved.length}` : label} aria-current={section === value ? 'page' : undefined} className={cn('h-11 min-w-0 flex-1 gap-2 px-2 lg:flex-none lg:justify-start lg:px-3', section === value && 'bg-sidebar-accent')} onClick={() => openSection(value)}>
+                <Icon className="hidden size-4 sm:block" aria-hidden="true" /><span className={value === 'saved' ? 'hidden sm:inline' : undefined}>{label}</span>{value === 'saved' && <span className="sm:hidden">Saved</span>}
+                {section === value && <Check className="size-3.5" aria-hidden="true" />}
+                {value === 'saved' && saved.length > 0 && <span className="text-xs tabular-nums text-muted-foreground lg:ms-auto">{saved.length}</span>}
+              </Button>
+            ))}
+          </nav>
+          <div className="lg:mt-auto">
+            <Button variant="outline" className="h-11 gap-2 px-3 lg:w-full" onClick={() => setModal('import')}><Plus aria-hidden="true" />New review</Button>
+            <p className="mt-4 hidden text-xs leading-5 text-muted-foreground lg:block">Sample workspace.<br />Changes reset on refresh.</p>
+          </div>
+        </aside>
+
+        <main id="main-content" ref={mainRef} tabIndex={-1} aria-labelledby="page-title" className="min-w-0 outline-none">
+          <div className="mx-auto max-w-[1440px] px-5 py-8 md:px-8 lg:py-10 xl:px-10">
+            {section === 'review' ? <>
+              <header className="mb-8">
+                <h1 id="page-title" className="text-2xl font-medium tracking-tight">Product designer · Acme</h1>
+                <p className="mt-2 text-sm text-muted-foreground">Sample hiring interview · {questions.length} questions</p>
+              </header>
+
+              <div className="grid gap-8 min-[1120px]:grid-cols-[184px_minmax(0,1fr)]">
+                <aside className="min-w-0" aria-label="Interview questions">
+                  <div className="space-y-2 min-[1120px]:hidden">
+                    <Label htmlFor="question-select">Question</Label>
+                    <Select value={String(selected)} items={questionOptions} onValueChange={value => { if (value !== null) selectQuestion(Number(value)); }}>
+                      <SelectTrigger id="question-select" className="h-auto! min-h-11 w-full gap-3 px-3 py-2 text-base"><SelectValue /></SelectTrigger>
+                      <SelectContent alignItemWithTrigger={false}>
+                        {questionOptions.map(option => <SelectItem key={option.value} value={option.value} className="min-h-11 py-3 *:whitespace-normal">{option.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="hidden min-[1120px]:block">
+                    <h2 className="mb-3 px-3 text-sm font-medium text-muted-foreground">Questions</h2>
+                    <nav className="space-y-1" aria-label="Question navigation">
+                      {questions.map((item, i) => (
+                        <Button key={item.short} variant="ghost" aria-label={`Question ${i + 1}: ${item.short}`} aria-current={selected === i ? 'step' : undefined} className={cn('h-auto min-h-14 w-full items-start justify-start gap-3 px-3 py-3 text-start whitespace-normal', selected === i && 'bg-primary/5 ring-1 ring-inset ring-primary/20')} onClick={() => selectQuestion(i)}>
+                          <span className="flex size-4 shrink-0 items-center justify-center pt-0.5 text-xs font-normal tabular-nums text-muted-foreground">{selected === i ? <Check className="size-4 text-foreground" aria-hidden="true" /> : String(i + 1).padStart(2, '0')}</span>
+                          <span className="text-sm leading-5">{item.short}</span>
+                        </Button>
+                      ))}
+                    </nav>
+                  </div>
+                </aside>
+
+                <article className="@container min-w-0">
+                  <p className="text-sm text-muted-foreground">Question {selected + 1} of {questions.length} · {q.category}</p>
+                  <h2 className="mt-3 max-w-3xl text-2xl leading-snug font-medium tracking-tight md:text-[28px]">{q.title}</h2>
+                  <Tabs value={detailTab} onValueChange={value => setDetailTab(String(value))} className="mt-5 gap-5">
+                    <TabsList variant="line" aria-label="Answer details" className="h-11"><TabsTrigger value="answer" className="h-11 px-3">Answer</TabsTrigger><TabsTrigger value="source" className="h-11 px-3">Transcript</TabsTrigger></TabsList>
+                    <TabsContent value="answer">
+                      <AnswerReview original={q.original} revised={revisions[selected]} why={q.why} />
+                      <div className="flex flex-wrap gap-3 pb-5">
+                        <Button className="h-11 gap-2 px-4" disabled={saved.includes(selected)} focusableWhenDisabled onClick={saveAnswer}>{saved.includes(selected) ? <Check aria-hidden="true" /> : <Bookmark aria-hidden="true" />}{saved.includes(selected) ? 'Saved' : 'Save answer'}</Button>
+                        <Button variant="outline" className="h-11 px-4" onClick={editAnswer}>Edit answer</Button>
+                      </div>
+                      {selected === 1 && <Accordion><AccordionItem value="follow-up"><AccordionTrigger className="min-h-11">Follow-up question</AccordionTrigger><AccordionContent><FollowUp /></AccordionContent></AccordionItem></Accordion>}
+                    </TabsContent>
+                    <TabsContent value="source">
+                      <Card className="[--card-spacing:--spacing(5)]">
+                        <CardHeader><h3 className="text-sm font-medium text-muted-foreground">Original transcript</h3></CardHeader>
+                        <CardContent className="space-y-5 text-base leading-7"><p><strong className="font-medium">Interviewer:</strong> {q.title}</p><p><strong className="font-medium">You:</strong> {q.original}</p>{selected === 1 && <FollowUp />}</CardContent>
+                      </Card>
+                    </TabsContent>
+                  </Tabs>
+                </article>
+              </div>
+            </> : section === 'saved' ? (
+              <section className="max-w-3xl">
+                <h1 id="page-title" className="text-2xl font-medium tracking-tight">Saved answers</h1>
+                <div className="mt-8 space-y-5">
+                  {saved.length ? saved.map(i => <Card key={i} className="[--card-spacing:--spacing(5)]"><CardHeader><h2 className="text-lg font-medium leading-snug">{questions[i].title}</h2></CardHeader><CardContent><p className="text-base leading-7">{revisions[i]}</p><Button variant="ghost" className="mt-4 h-11 gap-2 px-0 hover:bg-transparent hover:text-primary" onClick={() => { selectQuestion(i); openSection('review'); }}>Open answer<ArrowRight aria-hidden="true" /></Button></CardContent></Card>) : <Card className="[--card-spacing:--spacing(6)]"><CardHeader><h2 className="text-lg font-medium">No saved answers</h2></CardHeader><CardContent><p className="text-sm leading-6 text-muted-foreground">Save a proposed answer from your review.</p><Button variant="outline" className="mt-5 h-11 px-4" onClick={() => openSection('review')}>Review answers</Button></CardContent></Card>}
+                </div>
+              </section>
+            ) : (
+              <section className="max-w-2xl">
+                <h1 id="page-title" className="text-2xl font-medium tracking-tight">Preparation priorities</h1>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">Choose up to three things to practise.</p>
+                <form className="mt-8 space-y-6" onSubmit={event => { event.preventDefault(); toast.success('Priorities saved.'); }}>
+                  {priorities.map((value, i) => <div key={i} className="space-y-2"><Label htmlFor={`priority-${i}`}>Priority {i + 1}</Label><Textarea id={`priority-${i}`} className="min-h-11 resize-none text-base! leading-6" value={value} onChange={event => setPriorities(current => current.map((p, index) => index === i ? event.target.value : p))} /></div>)}
+                  <Button type="submit" className="h-11 px-4">Save priorities</Button>
+                </form>
+              </section>
+            )}
+            <p className="mt-8 text-xs text-muted-foreground lg:hidden">Sample workspace. Changes reset on refresh.</p>
+          </div>
+        </main>
+      </div>
+    )}
 
     <Dialog open={modal !== null} onOpenChange={open => { if (!open) setModal(null); }}>
       <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-lg">
-        {modal === 'import' ? <><DialogHeader><DialogTitle>Bring in your interview.</DialogTitle><DialogDescription>Paste or upload a transcript. This prototype opens a sample review; nothing is uploaded or analyzed.</DialogDescription></DialogHeader><div className="space-y-5 py-2"><div className="space-y-2"><Label htmlFor="role">Target role</Label><Input id="role" placeholder="e.g. Product designer" /></div><div className="space-y-2"><Label htmlFor="interview-type">Interview type</Label><Select defaultValue="real" items={[{value:'real', label:'Real interview'}, {value:'mock', label:'Mock interview'}]}><SelectTrigger id="interview-type" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="real">Real interview</SelectItem><SelectItem value="mock">Mock interview</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label htmlFor="transcript">Transcript</Label><Textarea id="transcript" className="min-h-32" placeholder={'Interviewer: Tell me about a time…\nYou: …'} /></div><div className="space-y-2"><Label htmlFor="transcript-file">Or select a plain-text file</Label><Input id="transcript-file" type="file" accept=".txt,text/plain" /></div></div><DialogFooter><Button onClick={() => {setModal(null); openExample();}}>Explore sample review<ArrowUpRight /></Button></DialogFooter></> : modal === 'edit' ? <><DialogHeader><DialogTitle>Make it sound like you.</DialogTitle><DialogDescription>Edit your proposed future answer. The original transcript stays unchanged.</DialogDescription></DialogHeader><form onSubmit={event => {event.preventDefault(); if (!draft.trim()) return; setRevisions(current => current.map((text, i) => i === selected ? draft.trim() : text)); setSaved(current => current.includes(selected) ? current : [...current, selected]); setModal(null); toast.success('Revision saved. Your original answer is unchanged.');}}><div className="space-y-2 pb-6"><Label htmlFor="revision">Your revision</Label><Textarea id="revision" className="min-h-40" required value={draft} onChange={event => setDraft(event.target.value)} /></div><DialogFooter><Button type="submit" disabled={!draft.trim()}>Save revision</Button></DialogFooter></form></> : <><DialogHeader><DialogTitle>A space to explore.</DialogTitle><DialogDescription>This prototype uses fictional sample content. Switch questions, inspect the source, edit revisions, save answers, and update preparation priorities.</DialogDescription></DialogHeader><p className="text-sm leading-7 text-muted-foreground">Changes are held for this page session. No transcript processing or account sign-in is connected.</p></>}
+        {modal === 'import' ? <>
+          <DialogHeader className="pe-10"><DialogTitle>New review</DialogTitle><DialogDescription>Recording uploads aren’t connected in this preview. You can explore the sample review.</DialogDescription></DialogHeader>
+          <DialogFooter><Button className="h-11 gap-2 px-4" onClick={() => { setModal(null); openExample(); }}>Open sample review<ArrowRight aria-hidden="true" /></Button></DialogFooter>
+        </> : <>
+          <DialogHeader className="pe-10"><DialogTitle>Edit proposed answer</DialogTitle><DialogDescription>Your original transcript stays unchanged.</DialogDescription></DialogHeader>
+          <form noValidate onSubmit={event => {
+            event.preventDefault();
+            if (!draft.trim()) { setDraftError('Enter an answer before saving.'); revisionRef.current?.focus(); return; }
+            setRevisions(current => current.map((text, i) => i === selected ? draft.trim() : text));
+            setSaved(current => current.includes(selected) ? current : [...current, selected]);
+            setModal(null);
+            toast.success('Answer updated.');
+          }}>
+            <div className="space-y-2 pb-6"><Label htmlFor="revision">Proposed answer</Label><Textarea id="revision" ref={revisionRef} className="min-h-48 text-base! leading-7" required aria-invalid={!!draftError} aria-describedby={draftError ? 'revision-error' : undefined} value={draft} onChange={event => { setDraft(event.target.value); setDraftError(''); }} />{draftError && <p id="revision-error" role="alert" className="text-sm text-destructive">{draftError}</p>}</div>
+            <DialogFooter><Button type="button" variant="ghost" className="h-11 px-4" onClick={() => setModal(null)}>Cancel</Button><Button type="submit" className="h-11 px-4">Save answer</Button></DialogFooter>
+          </form>
+        </>}
       </DialogContent>
     </Dialog>
     <Toaster theme="light" position="bottom-center" />
   </>;
+}
+
+function FollowUp() {
+  return <div className="space-y-2 text-sm leading-7"><p><strong className="font-medium">Interviewer:</strong> What helped you reach an agreement?</p><p><strong className="font-medium">You:</strong> Seeing both options made it easier to talk about the differences.</p></div>;
 }

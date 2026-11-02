@@ -1,0 +1,24 @@
+.viewport {
+  --review-duration: 120s;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .track {
+    animation: review-scroll var(--review-duration) linear infinite;
+    animation-play-state: paused;
+    will-change: transform;
+  }
+
+  .viewport[data-visible='true'] .track {
+    animation-play-state: running;
+  }
+}
+
+@keyframes review-scroll {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
